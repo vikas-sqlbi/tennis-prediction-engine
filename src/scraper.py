@@ -903,10 +903,16 @@ def _scrape_results_page(date: datetime) -> List[Dict]:
     date_str = date.strftime("%Y-%m-%d")
     is_today = date.date() == datetime.now(USER_TIMEZONE).date()
     
+    # Use year/month/day format which properly filters by date
+    year = date.year
+    month = date.month
+    day = date.day
+    
     if is_today:
         url = "https://www.tennisexplorer.com/results/"
     else:
-        url = f"https://www.tennisexplorer.com/results/?date={date_str}"
+        # Use the correct URL format that properly filters to specific date
+        url = f"https://www.tennisexplorer.com/results/?type=atp-single&year={year}&month={month:02d}&day={day:02d}"
     
     try:
         session = get_te_session()
