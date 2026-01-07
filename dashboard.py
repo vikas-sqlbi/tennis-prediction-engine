@@ -842,13 +842,24 @@ def page_upsets(model, profiles):
                 success_rate = correct / len(all_finished_upsets)
                 st.metric("Upset Success Rate", f"{success_rate:.1%}", f"{correct}/{len(all_finished_upsets)} correct")
             
-            sub_today_fin, sub_yesterday_fin = st.tabs([f"📅 Today ({user_today_str}) - {len(today_fin_upsets)}", f"📅 Yesterday ({user_yesterday_str}) - {len(yesterday_fin_upsets)}"])
+            # Also include day before yesterday for timezone edge cases
+            user_2daysago_str = (user_now - timedelta(days=2)).strftime("%Y-%m-%d")
+            earlier_fin_upsets = all_finished_upsets[all_finished_upsets['_user_date'] == user_2daysago_str]
+            
+            sub_today_fin, sub_yesterday_fin, sub_earlier_fin = st.tabs([
+                f"📅 Today ({user_today_str}) - {len(today_fin_upsets)}", 
+                f"📅 Yesterday ({user_yesterday_str}) - {len(yesterday_fin_upsets)}",
+                f"📅 Earlier ({user_2daysago_str}) - {len(earlier_fin_upsets)}"
+            ])
             
             with sub_today_fin:
                 display_upset_cards(today_fin_upsets)
             
             with sub_yesterday_fin:
                 display_upset_cards(yesterday_fin_upsets)
+            
+            with sub_earlier_fin:
+                display_upset_cards(earlier_fin_upsets)
 
 
 def page_players(profiles, profiler=None):

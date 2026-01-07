@@ -621,14 +621,21 @@ def scrape_tennis_explorer(include_tomorrow: bool = True, include_yesterday: boo
             
             key = make_key(match)
             if key in seen_matches:
-                # Same match - update with completed info (more authoritative)
-                seen_matches[key]['score'] = match.get('score')
-                seen_matches[key]['winner'] = match.get('winner')
-                seen_matches[key]['status'] = 'completed'
-                seen_matches[key]['date'] = yesterday_cet_str  # Use actual completion date
-                seen_matches[key]['source_day'] = 'Yesterday'
-                if match.get('datetime_local'):
-                    seen_matches[key]['datetime_local'] = match['datetime_local']
+                existing = seen_matches[key]
+                # Only update if we don't already have completed info from today
+                # This prevents yesterday's results from overwriting today's early-morning matches
+                if existing.get('status') != 'completed':
+                    seen_matches[key]['score'] = match.get('score')
+                    seen_matches[key]['winner'] = match.get('winner')
+                    seen_matches[key]['status'] = 'completed'
+                    seen_matches[key]['date'] = yesterday_cet_str
+                    seen_matches[key]['source_day'] = 'Yesterday'
+                    if match.get('datetime_local'):
+                        seen_matches[key]['datetime_local'] = match['datetime_local']
+                # If already completed from today, just ensure we have score/winner
+                elif not existing.get('score') and match.get('score'):
+                    seen_matches[key]['score'] = match.get('score')
+                    seen_matches[key]['winner'] = match.get('winner')
             else:
                 # New match from yesterday's page
                 match['status'] = 'completed'
