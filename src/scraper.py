@@ -44,20 +44,45 @@ def create_te_session() -> requests.Session:
     """
     session = requests.Session()
     offset = get_current_timezone_offset()
-    session.cookies.set('my_timezone', str(offset), domain='.tennisexplorer.com')
+    # Set cookie without domain restriction - let requests handle it
+    session.cookies.set('my_timezone', str(offset))
     logger.info(f"Created TE session with timezone offset: {offset} ({'CDT' if offset == -5 else 'CST'})")
     return session
 
 
 # Global session for all requests (initialized lazily)
 _te_session: Optional[requests.Session] = None
+_te_session_created_at: Optional[datetime] = None
 
 
-def get_te_session() -> requests.Session:
-    """Get or create the TennisExplorer session with timezone cookie."""
-    global _te_session
-    if _te_session is None:
+def reset_te_session() -> None:
+    """Force reset the TennisExplorer session. Call this to ensure fresh cookies."""
+    global _te_session, _te_session_created_at
+    _te_session = None
+    _te_session_created_at = None
+    logger.info("Reset TennisExplorer session")
+
+
+def get_te_session(force_new: bool = False) -> requests.Session:
+    """
+    Get or create the TennisExplorer session with timezone cookie.
+    
+    Args:
+        force_new: If True, always create a fresh session
+    """
+    global _te_session, _te_session_created_at
+    
+    # Force new session if requested or if session is older than 1 hour
+    if force_new or _te_session is None:
         _te_session = create_te_session()
+        _te_session_created_at = datetime.now(USER_TIMEZONE)
+    elif _te_session_created_at:
+        age = datetime.now(USER_TIMEZONE) - _te_session_created_at
+        if age.total_seconds() > 3600:  # Refresh after 1 hour
+            logger.info("Session older than 1 hour, refreshing...")
+            _te_session = create_te_session()
+            _te_session_created_at = datetime.now(USER_TIMEZONE)
+    
     return _te_session
 
 
@@ -514,6 +539,9 @@ def scrape_tennis_explorer(include_tomorrow: bool = True, include_yesterday: boo
         include_tomorrow: If True, also scrape tomorrow's matches
         include_yesterday: If True, also scrape yesterday's completed matches
     """
+    # Reset session to ensure fresh timezone cookie
+    reset_te_session()
+    
     seen_matches = {}  # Track unique matches: key -> match dict
     
     # Category URLs to scrape - ATP ONLY (no WTA since we don't have historical data)
@@ -693,6 +721,17 @@ def _scrape_tennis_explorer_date(date: datetime, category_type: str = None) -> L
         session = get_te_session()
         response = session.get(url, headers=HEADERS, timeout=15)
         response.raise_for_status()
+        
+        # Verify timezone in response (first request only)
+        if category_type is None:
+            tz_match = re.search(r'GMT([+-]?\d+)', response.text)
+            if tz_match:
+                response_tz = tz_match.group(1)
+                expected_tz = str(get_current_timezone_offset())
+                if response_tz != expected_tz:
+                    logger.warning(f"Timezone mismatch! Response shows GMT{response_tz}, expected GMT{expected_tz}")
+                else:
+                    logger.info(f"Timezone verified: GMT{response_tz}")
     except Exception as e:
         logger.error(f"Failed to fetch TennisExplorer for {date_str}: {e}")
         return []
