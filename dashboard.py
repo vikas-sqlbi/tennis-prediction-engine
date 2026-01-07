@@ -399,18 +399,15 @@ def page_calendar(model, profiles):
     with tab_finished:
         filtered_finished = apply_filters(finished_matches)
         
-        st.write(f"**{len(filtered_finished)}** finished matches")
-        
-        # Calculate prediction success/failure stats
+        # Calculate prediction success/failure stats (respecting upset filter)
         if len(filtered_finished) > 0:
             success_count = 0
             fail_count = 0
             no_prediction_count = 0
+            display_matches = []
             
             for _, match in filtered_finished.iterrows():
                 winner = match.get('winner')
-                if not winner:
-                    continue
                 
                 pred = model.predict_match(
                     match['player1'], 
@@ -420,7 +417,18 @@ def page_calendar(model, profiles):
                     tournament_name=match.get('tournament', '')
                 )
                 
-                if pred is None:
+                # Check if this is an upset prediction
+                is_upset = pred is not None and pred.predicted_winner == pred.underdog
+                
+                # Skip non-upsets if filter is on
+                if show_upsets_only and not is_upset:
+                    continue
+                
+                display_matches.append(match)
+                
+                if not winner:
+                    no_prediction_count += 1
+                elif pred is None:
                     no_prediction_count += 1
                 elif pred.predicted_winner == winner:
                     success_count += 1
@@ -428,6 +436,10 @@ def page_calendar(model, profiles):
                     fail_count += 1
             
             total_with_predictions = success_count + fail_count
+            total_display = len(display_matches)
+            
+            filter_label = " (upset predictions only)" if show_upsets_only else ""
+            st.write(f"**{total_display}** finished matches{filter_label}")
             
             # Display summary metrics
             col_s, col_f, col_pct = st.columns(3)
@@ -446,8 +458,16 @@ def page_calendar(model, profiles):
                 st.caption(f"({no_prediction_count} matches without predictions)")
             
             st.markdown("---")
-        
-        display_day_matches(filtered_finished, model, show_upsets_only, sort_ascending=False)
+            
+            # Display the matches (already filtered)
+            if total_display > 0:
+                matches_df = pd.DataFrame(display_matches)
+                display_day_matches(matches_df, model, show_upsets_only=False, sort_ascending=False)
+            else:
+                st.info("No matches found with current filters.")
+        else:
+            st.write("**0** finished matches")
+            st.info("No matches found with current filters.")
 
 
 def page_upsets(model, profiles):
