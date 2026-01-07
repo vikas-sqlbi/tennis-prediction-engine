@@ -24,11 +24,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Clear match cache on startup to ensure fresh timezone data
-# This runs once when the app first loads
-if 'app_initialized' not in st.session_state:
-    st.cache_data.clear()
-    st.session_state.app_initialized = True
+
 
 from data_loader import load_matches, preprocess_matches
 from player_profiler import PlayerProfiler
