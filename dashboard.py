@@ -412,14 +412,16 @@ def page_calendar(model, profiles):
     with tab_finished:
         filtered_finished = apply_filters(finished_matches)
         
-        # Calculate prediction success/failure stats (respecting upset filter)
+        # Pre-calculate prediction outcomes for all matches
         if len(filtered_finished) > 0:
-            success_count = 0
-            fail_count = 0
+            all_matches = []
+            correct_matches = []
+            wrong_matches = []
+            upset_pred_matches = []
             no_prediction_count = 0
-            display_matches = []
             
             for _, match in filtered_finished.iterrows():
+                match_data = match.to_dict()
                 winner = match.get('winner')
                 
                 pred = model.predict_match(
@@ -430,31 +432,30 @@ def page_calendar(model, profiles):
                     tournament_name=match.get('tournament', '')
                 )
                 
-                # Check if this is an upset prediction
-                is_upset = pred is not None and pred.predicted_winner == pred.underdog
+                # Track prediction outcome
+                is_upset_pred = pred is not None and pred.predicted_winner == pred.underdog
                 
-                # Skip non-upsets if filter is on
-                if show_upsets_only and not is_upset:
-                    continue
-                
-                display_matches.append(match)
-                
-                if not winner:
+                if pred is None or not winner:
                     no_prediction_count += 1
-                elif pred is None:
-                    no_prediction_count += 1
+                    match_data['_outcome'] = 'no_prediction'
                 elif pred.predicted_winner == winner:
-                    success_count += 1
+                    match_data['_outcome'] = 'correct'
+                    correct_matches.append(match_data)
                 else:
-                    fail_count += 1
+                    match_data['_outcome'] = 'wrong'
+                    wrong_matches.append(match_data)
+                
+                if is_upset_pred:
+                    upset_pred_matches.append(match_data)
+                
+                all_matches.append(match_data)
             
+            success_count = len(correct_matches)
+            fail_count = len(wrong_matches)
+            upset_count = len(upset_pred_matches)
             total_with_predictions = success_count + fail_count
-            total_display = len(display_matches)
             
-            filter_label = " (upset predictions only)" if show_upsets_only else ""
-            st.write(f"**{total_display}** finished matches{filter_label}")
-            
-            # Display summary metrics
+            # Summary metrics
             col_s, col_f, col_pct = st.columns(3)
             with col_s:
                 st.metric("✅ Correct", success_count)
@@ -472,12 +473,37 @@ def page_calendar(model, profiles):
             
             st.markdown("---")
             
-            # Display the matches (already filtered)
-            if total_display > 0:
-                matches_df = pd.DataFrame(display_matches)
-                display_day_matches(matches_df, model, show_upsets_only=False, sort_ascending=False)
-            else:
-                st.info("No matches found with current filters.")
+            # Sub-tabs for filtering by outcome
+            tab_all, tab_correct, tab_wrong, tab_upsets = st.tabs([
+                f"📋 All ({len(all_matches)})",
+                f"✅ Correct ({success_count})",
+                f"❌ Wrong ({fail_count})",
+                f"⚠️ Upset Predictions ({upset_count})"
+            ])
+            
+            with tab_all:
+                if len(all_matches) > 0:
+                    display_day_matches(pd.DataFrame(all_matches), model, show_upsets_only=False, sort_ascending=False)
+                else:
+                    st.info("No matches found.")
+            
+            with tab_correct:
+                if len(correct_matches) > 0:
+                    display_day_matches(pd.DataFrame(correct_matches), model, show_upsets_only=False, sort_ascending=False)
+                else:
+                    st.info("No correct predictions.")
+            
+            with tab_wrong:
+                if len(wrong_matches) > 0:
+                    display_day_matches(pd.DataFrame(wrong_matches), model, show_upsets_only=False, sort_ascending=False)
+                else:
+                    st.info("No wrong predictions.")
+            
+            with tab_upsets:
+                if len(upset_pred_matches) > 0:
+                    display_day_matches(pd.DataFrame(upset_pred_matches), model, show_upsets_only=False, sort_ascending=False)
+                else:
+                    st.info("No upset predictions in finished matches.")
         else:
             st.write("**0** finished matches")
             st.info("No matches found with current filters.")
