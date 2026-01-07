@@ -366,7 +366,15 @@ def page_calendar(model, profiles):
         (upcoming['date_label'].isin(['Today', 'Yesterday']))
     ]
     
-
+    # DEBUG: Show what user dates exist in ALL finished matches
+    all_finished = upcoming[upcoming['_status'] == 'finished']
+    if len(all_finished) > 0:
+        unique_user_dates = sorted(all_finished['_user_date'].unique().tolist())
+        unique_cet_dates = sorted(all_finished['date'].unique().tolist())
+        st.sidebar.caption(f"🔍 Finished: {len(all_finished)} total")
+        st.sidebar.caption(f"CET dates: {unique_cet_dates}")
+        st.sidebar.caption(f"User dates: {unique_user_dates}")
+        st.sidebar.caption(f"Looking for: today={today_str}, yest={yesterday_str}")
     
     # Filters section - visible before tabs
     st.subheader("🔍 Filters")
