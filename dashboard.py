@@ -331,8 +331,18 @@ def page_calendar(model, profiles):
             return 'Tomorrow'
         return 'Other'
     
-    # Always recalculate date_label based on user's timezone
-    upcoming['date_label'] = upcoming['date'].apply(assign_label)
+    # Helper to get user's local date for a match (converts CET to user timezone)
+    def get_match_user_date(row):
+        """Get user's local date for a match based on CET time and date."""
+        time_str = row.get('time', '')
+        cet_date = row.get('date', '')
+        return get_user_local_date_for_match(time_str, cet_date)
+    
+    # Calculate user's local date for each match FIRST (before any filtering)
+    upcoming['_user_date'] = upcoming.apply(get_match_user_date, axis=1)
+    
+    # Now assign labels based on user's local date (not raw CET date)
+    upcoming['date_label'] = upcoming['_user_date'].apply(assign_label)
     
     # Determine match status for all matches
     def get_match_status(row):
@@ -516,19 +526,6 @@ def page_calendar(model, profiles):
             st.info("No matches match your filter criteria.")
         return displayed
     
-    # Helper to get user's local date for a match (converts CET to user timezone)
-    def get_match_user_date(row):
-        """Get user's local date for a match based on CET time and date."""
-        time_str = row.get('time', '')
-        cet_date = row.get('date', '')
-        return get_user_local_date_for_match(time_str, cet_date)
-    
-    # User's local dates for filtering AND display
-    user_now = get_user_now()
-    user_today_str = user_now.strftime("%Y-%m-%d")
-    user_tomorrow_str = (user_now + timedelta(days=1)).strftime("%Y-%m-%d")
-    user_yesterday_str = (user_now - timedelta(days=1)).strftime("%Y-%m-%d")
-    
     # Main tabs: Upcoming and Finished
     tab_upcoming, tab_finished = st.tabs(["⏰ Upcoming", "✅ Finished"])
     
@@ -536,14 +533,13 @@ def page_calendar(model, profiles):
     with tab_upcoming:
         filtered_upcoming = apply_filters(upcoming_matches)
         
-        # Convert each match's CET datetime to user's local date for bucketing
-        filtered_upcoming['_user_date'] = filtered_upcoming.apply(get_match_user_date, axis=1)
-        today_upcoming = filtered_upcoming[filtered_upcoming['_user_date'] == user_today_str]
-        tomorrow_upcoming = filtered_upcoming[filtered_upcoming['_user_date'] == user_tomorrow_str]
+        # _user_date already computed at start, just filter by it
+        today_upcoming = filtered_upcoming[filtered_upcoming['_user_date'] == today_str]
+        tomorrow_upcoming = filtered_upcoming[filtered_upcoming['_user_date'] == tomorrow_str]
         
         st.write(f"**{len(filtered_upcoming)}** upcoming matches total")
         
-        sub_today, sub_tomorrow = st.tabs([f"📅 Today ({user_today_str}) - {len(today_upcoming)}", f"📅 Tomorrow ({user_tomorrow_str}) - {len(tomorrow_upcoming)}"])
+        sub_today, sub_tomorrow = st.tabs([f"📅 Today ({today_str}) - {len(today_upcoming)}", f"📅 Tomorrow ({tomorrow_str}) - {len(tomorrow_upcoming)}"])
         
         with sub_today:
             display_day_matches(today_upcoming, model, show_upsets_only, sort_ascending=True)
@@ -555,14 +551,13 @@ def page_calendar(model, profiles):
     with tab_finished:
         filtered_finished = apply_filters(finished_matches)
         
-        # Convert each match's CET datetime to user's local date for bucketing
-        filtered_finished['_user_date'] = filtered_finished.apply(get_match_user_date, axis=1)
-        today_finished = filtered_finished[filtered_finished['_user_date'] == user_today_str]
-        yesterday_finished = filtered_finished[filtered_finished['_user_date'] == user_yesterday_str]
+        # _user_date already computed at start, just filter by it
+        today_finished = filtered_finished[filtered_finished['_user_date'] == today_str]
+        yesterday_finished = filtered_finished[filtered_finished['_user_date'] == yesterday_str]
         
         st.write(f"**{len(filtered_finished)}** finished matches total")
         
-        sub_today_fin, sub_yesterday_fin = st.tabs([f"📅 Today ({user_today_str}) - {len(today_finished)}", f"📅 Yesterday ({user_yesterday_str}) - {len(yesterday_finished)}"])
+        sub_today_fin, sub_yesterday_fin = st.tabs([f"📅 Today ({today_str}) - {len(today_finished)}", f"📅 Yesterday ({yesterday_str}) - {len(yesterday_finished)}"])
         
         with sub_today_fin:
             display_day_matches(today_finished, model, show_upsets_only, sort_ascending=False)
