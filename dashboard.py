@@ -24,6 +24,12 @@ st.set_page_config(
     layout="wide"
 )
 
+# Clear match cache on startup to ensure fresh timezone data
+# This runs once when the app first loads
+if 'app_initialized' not in st.session_state:
+    st.cache_data.clear()
+    st.session_state.app_initialized = True
+
 from data_loader import load_matches, preprocess_matches
 from player_profiler import PlayerProfiler
 from matchup_model import MatchupModel
@@ -97,6 +103,8 @@ def get_upcoming_matches():
 
 def refresh_matches():
     """Clear the match cache to force a refresh."""
+    from scraper import reset_te_session
+    reset_te_session()
     get_upcoming_matches.clear()
 
 
@@ -124,6 +132,14 @@ def page_calendar(model, profiles):
     """Match Calendar page."""
     st.header("📅 Match Calendar & Predictions")
     
+    # Timezone diagnostic display
+    from scraper import get_current_timezone_offset, USER_TIMEZONE
+    from datetime import datetime as dt
+    tz_offset = get_current_timezone_offset()
+    tz_name = "CDT" if tz_offset == -5 else "CST"
+    current_time_cst = dt.now(USER_TIMEZONE).strftime("%I:%M %p")
+    st.caption(f"🕐 Times shown in US Central ({tz_name}, GMT{tz_offset}) | Current time: {current_time_cst}")
+    
     # Refresh button
     col_refresh, col_info = st.columns([1, 4])
     with col_refresh:
@@ -138,7 +154,7 @@ def page_calendar(model, profiles):
         return
     
     with col_info:
-        st.info(f"📡 Scraped **{len(upcoming)} matches** from TennisExplorer (auto-refreshes every 30 min)")
+        st.info(f"📡 Scraped **{len(upcoming)} matches** from TennisExplorer (auto-refreshes every 5 min)")
     
     # Ensure date_label column exists (for backwards compatibility)
     if 'date_label' not in upcoming.columns:
