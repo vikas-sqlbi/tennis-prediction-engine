@@ -485,12 +485,17 @@ def page_calendar(model, profiles):
         except:
             return None
     
-    # Date strings for comparison (using CET - TennisExplorer timezone)
-    # FIX: Match dates are stored in CET, so compare with CET dates
+    # CET dates for filtering (match data is stored in CET from TennisExplorer)
     cet_now = get_cet_now()
-    today_str = cet_now.strftime("%Y-%m-%d")
-    tomorrow_str = (cet_now + timedelta(days=1)).strftime("%Y-%m-%d")
-    yesterday_str = (cet_now - timedelta(days=1)).strftime("%Y-%m-%d")
+    cet_today_str = cet_now.strftime("%Y-%m-%d")
+    cet_tomorrow_str = (cet_now + timedelta(days=1)).strftime("%Y-%m-%d")
+    cet_yesterday_str = (cet_now - timedelta(days=1)).strftime("%Y-%m-%d")
+    
+    # User's local dates for display in tab labels
+    user_now = get_user_now()
+    user_today_str = user_now.strftime("%Y-%m-%d")
+    user_tomorrow_str = (user_now + timedelta(days=1)).strftime("%Y-%m-%d")
+    user_yesterday_str = (user_now - timedelta(days=1)).strftime("%Y-%m-%d")
     
     # Main tabs: Upcoming and Finished
     tab_upcoming, tab_finished = st.tabs(["⏰ Upcoming", "✅ Finished"])
@@ -499,17 +504,18 @@ def page_calendar(model, profiles):
     with tab_upcoming:
         filtered_upcoming = apply_filters(upcoming_matches)
         
-        # Split by actual local date from datetime_local
+        # Split by actual local date from datetime_local (using CET dates for filtering)
         filtered_upcoming['_local_date'] = filtered_upcoming['datetime_local'].apply(get_local_date)
-        today_upcoming = filtered_upcoming[filtered_upcoming['_local_date'] == today_str]
-        tomorrow_upcoming = filtered_upcoming[filtered_upcoming['_local_date'] == tomorrow_str]
+        today_upcoming = filtered_upcoming[filtered_upcoming['_local_date'] == cet_today_str]
+        tomorrow_upcoming = filtered_upcoming[filtered_upcoming['_local_date'] == cet_tomorrow_str]
         # Include matches without datetime_local in "Today"
         no_date = filtered_upcoming[filtered_upcoming['_local_date'].isna()]
         today_upcoming = pd.concat([today_upcoming, no_date])
         
         st.write(f"**{len(filtered_upcoming)}** upcoming matches total")
         
-        sub_today, sub_tomorrow = st.tabs([f"📅 Today ({today_str}) - {len(today_upcoming)}", f"📅 Tomorrow ({tomorrow_str}) - {len(tomorrow_upcoming)}"])
+        # Display user's local date in tab labels
+        sub_today, sub_tomorrow = st.tabs([f"📅 Today ({user_today_str}) - {len(today_upcoming)}", f"📅 Tomorrow ({user_tomorrow_str}) - {len(tomorrow_upcoming)}"])
         
         with sub_today:
             display_day_matches(today_upcoming, model, show_upsets_only, sort_ascending=True)
@@ -521,17 +527,18 @@ def page_calendar(model, profiles):
     with tab_finished:
         filtered_finished = apply_filters(finished_matches)
         
-        # Split by actual local date from datetime_local
+        # Split by actual local date from datetime_local (using CET dates for filtering)
         filtered_finished['_local_date'] = filtered_finished['datetime_local'].apply(get_local_date)
-        today_finished = filtered_finished[filtered_finished['_local_date'] == today_str]
-        yesterday_finished = filtered_finished[filtered_finished['_local_date'] == yesterday_str]
+        today_finished = filtered_finished[filtered_finished['_local_date'] == cet_today_str]
+        yesterday_finished = filtered_finished[filtered_finished['_local_date'] == cet_yesterday_str]
         # Include matches without datetime_local in "Today"
         no_date_fin = filtered_finished[filtered_finished['_local_date'].isna()]
         today_finished = pd.concat([today_finished, no_date_fin])
         
         st.write(f"**{len(filtered_finished)}** finished matches total")
         
-        sub_today_fin, sub_yesterday_fin = st.tabs([f"📅 Today ({today_str}) - {len(today_finished)}", f"📅 Yesterday ({yesterday_str}) - {len(yesterday_finished)}"])
+        # Display user's local date in tab labels
+        sub_today_fin, sub_yesterday_fin = st.tabs([f"📅 Today ({user_today_str}) - {len(today_finished)}", f"📅 Yesterday ({user_yesterday_str}) - {len(yesterday_finished)}"])
         
         with sub_today_fin:
             display_day_matches(today_finished, model, show_upsets_only, sort_ascending=False)
@@ -715,12 +722,17 @@ def page_upsets(model, profiles):
                 
                 st.info(f"💡 {row['Explanation']}")
     
-    # Date strings for comparison (using CET - TennisExplorer timezone)
-    # FIX: Match dates are stored in CET, so compare with CET dates
+    # CET dates for filtering (match data is stored in CET from TennisExplorer)
     cet_now = get_cet_now()
-    today_str = cet_now.strftime("%Y-%m-%d")
-    tomorrow_str = (cet_now + timedelta(days=1)).strftime("%Y-%m-%d")
-    yesterday_str = (cet_now - timedelta(days=1)).strftime("%Y-%m-%d")
+    cet_today_str = cet_now.strftime("%Y-%m-%d")
+    cet_tomorrow_str = (cet_now + timedelta(days=1)).strftime("%Y-%m-%d")
+    cet_yesterday_str = (cet_now - timedelta(days=1)).strftime("%Y-%m-%d")
+    
+    # User's local dates for display in tab labels
+    user_now = get_user_now()
+    user_today_str = user_now.strftime("%Y-%m-%d")
+    user_tomorrow_str = (user_now + timedelta(days=1)).strftime("%Y-%m-%d")
+    user_yesterday_str = (user_now - timedelta(days=1)).strftime("%Y-%m-%d")
     
     # Main tabs: Upcoming and Finished
     tab_upcoming, tab_finished = st.tabs(["⏰ Upcoming Upsets", "✅ Finished Upsets"])
@@ -735,16 +747,17 @@ def page_upsets(model, profiles):
         if len(all_upcoming_upsets) == 0:
             st.info(f"No upcoming upset predictions found (confidence >= {min_conf:.0%})")
         else:
-            # Split by local date
+            # Split by local date (using CET dates for filtering)
             all_upcoming_upsets['_local_date'] = all_upcoming_upsets['datetime_local'].apply(get_local_date)
-            today_upsets = all_upcoming_upsets[all_upcoming_upsets['_local_date'] == today_str]
-            tomorrow_upsets = all_upcoming_upsets[all_upcoming_upsets['_local_date'] == tomorrow_str]
+            today_upsets = all_upcoming_upsets[all_upcoming_upsets['_local_date'] == cet_today_str]
+            tomorrow_upsets = all_upcoming_upsets[all_upcoming_upsets['_local_date'] == cet_tomorrow_str]
             no_date_upsets = all_upcoming_upsets[all_upcoming_upsets['_local_date'].isna()]
             today_upsets = pd.concat([today_upsets, no_date_upsets])
             
             st.write(f"**{len(all_upcoming_upsets)}** upcoming upset predictions total")
             
-            sub_today, sub_tomorrow = st.tabs([f"📅 Today ({today_str}) - {len(today_upsets)}", f"📅 Tomorrow ({tomorrow_str}) - {len(tomorrow_upsets)}"])
+            # Display user's local date in tab labels
+            sub_today, sub_tomorrow = st.tabs([f"📅 Today ({user_today_str}) - {len(today_upsets)}", f"📅 Tomorrow ({user_tomorrow_str}) - {len(tomorrow_upsets)}"])
             
             with sub_today:
                 display_upset_cards(today_upsets)
@@ -762,10 +775,10 @@ def page_upsets(model, profiles):
         if len(all_finished_upsets) == 0:
             st.info(f"No finished upset predictions found (confidence >= {min_conf:.0%})")
         else:
-            # Split by local date
+            # Split by local date (using CET dates for filtering)
             all_finished_upsets['_local_date'] = all_finished_upsets['datetime_local'].apply(get_local_date)
-            today_fin_upsets = all_finished_upsets[all_finished_upsets['_local_date'] == today_str]
-            yesterday_fin_upsets = all_finished_upsets[all_finished_upsets['_local_date'] == yesterday_str]
+            today_fin_upsets = all_finished_upsets[all_finished_upsets['_local_date'] == cet_today_str]
+            yesterday_fin_upsets = all_finished_upsets[all_finished_upsets['_local_date'] == cet_yesterday_str]
             no_date_fin = all_finished_upsets[all_finished_upsets['_local_date'].isna()]
             today_fin_upsets = pd.concat([today_fin_upsets, no_date_fin])
             
@@ -777,7 +790,8 @@ def page_upsets(model, profiles):
                 success_rate = correct / len(all_finished_upsets)
                 st.metric("Upset Success Rate", f"{success_rate:.1%}", f"{correct}/{len(all_finished_upsets)} correct")
             
-            sub_today_fin, sub_yesterday_fin = st.tabs([f"📅 Today ({today_str}) - {len(today_fin_upsets)}", f"📅 Yesterday ({yesterday_str}) - {len(yesterday_fin_upsets)}"])
+            # Display user's local date in tab labels
+            sub_today_fin, sub_yesterday_fin = st.tabs([f"📅 Today ({user_today_str}) - {len(today_fin_upsets)}", f"📅 Yesterday ({user_yesterday_str}) - {len(yesterday_fin_upsets)}"])
             
             with sub_today_fin:
                 display_upset_cards(today_fin_upsets)
