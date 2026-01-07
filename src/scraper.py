@@ -552,13 +552,13 @@ def scrape_tennis_explorer(include_tomorrow: bool = True, include_yesterday: boo
     ]
     
     def make_key(match):
-        """Create deduplication key using date + players to keep matches on different days separate."""
+        """Create deduplication key using players only - same match shouldn't appear on multiple days."""
         p1 = match['player1'].lower().strip()
         p2 = match['player2'].lower().strip()
         # Sort players to handle case where player order might differ
         players = tuple(sorted([p1, p2]))
-        match_date = match.get('date', '')
-        return (match_date, players[0], players[1])
+        # Don't include date - we want to dedupe same players across days
+        return (players[0], players[1])
     
     # Scrape today first (all categories)
     # Times are returned in US Central Time (CST/CDT) via the my_timezone cookie
