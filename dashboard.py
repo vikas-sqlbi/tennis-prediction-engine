@@ -312,15 +312,28 @@ def page_calendar(model, profiles):
             
             with cols[3]:
                 if has_prediction:
-                    winner_color = "green" if pred.predicted_winner == match.get('favorite') else "orange"
-                    st.markdown(f"**Predicted:** :{winner_color}[{pred.predicted_winner}]")
+                    winner = match.get('winner')
                     
-                    if pred.set_scores:
-                        top_score = pred.set_scores[0]
-                        st.caption(f"📊 Likely: **{top_score.score}** ({top_score.probability:.0%})")
-                    
-                    if pred.tiebreak_probability > 0.3:
-                        st.caption(f"🎯 Tiebreak: {pred.tiebreak_probability:.0%}")
+                    # For finished matches, show if prediction was correct
+                    if is_finished and winner:
+                        prediction_correct = pred.predicted_winner == winner
+                        if prediction_correct:
+                            st.markdown(f"✅ **Correct!**")
+                            st.caption(f"Predicted: {pred.predicted_winner}")
+                        else:
+                            st.markdown(f"❌ **Wrong**")
+                            st.caption(f"Predicted: {pred.predicted_winner}")
+                    else:
+                        # Upcoming match - show prediction
+                        winner_color = "green" if pred.predicted_winner == match.get('favorite') else "orange"
+                        st.markdown(f"**Predicted:** :{winner_color}[{pred.predicted_winner}]")
+                        
+                        if pred.set_scores:
+                            top_score = pred.set_scores[0]
+                            st.caption(f"📊 Likely: **{top_score.score}** ({top_score.probability:.0%})")
+                        
+                        if pred.tiebreak_probability > 0.3:
+                            st.caption(f"🎯 Tiebreak: {pred.tiebreak_probability:.0%}")
                     
                     if is_upset:
                         st.caption(f"⚠️ Upset conf: **{pred.confidence:.0%}**")
