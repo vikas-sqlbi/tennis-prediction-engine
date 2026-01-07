@@ -168,9 +168,53 @@ def get_tournament_calendar():
 # PAGE FUNCTIONS
 # =============================================================================
 
+def render_timezone_selector():
+    """Render timezone selector prominently at top of page."""
+    # Initialize timezone in session state if not set
+    if 'user_timezone' not in st.session_state:
+        st.session_state['user_timezone'] = 'US/Central'
+    
+    col1, col2, col3 = st.columns([2, 2, 3])
+    
+    with col1:
+        current_tz = st.session_state.get('user_timezone', 'US/Central')
+        tz_keys = list(TIMEZONE_OPTIONS.keys())
+        current_index = tz_keys.index(current_tz) if current_tz in tz_keys else 1
+        
+        selected_tz = st.selectbox(
+            "🕐 Your Timezone",
+            options=tz_keys,
+            format_func=lambda x: TIMEZONE_OPTIONS[x],
+            index=current_index,
+            help="Select your timezone - Today/Tomorrow labels will adjust accordingly"
+        )
+        st.session_state['user_timezone'] = selected_tz
+    
+    with col2:
+        user_now = get_user_now()
+        st.metric(
+            label="Your Local Time",
+            value=user_now.strftime("%I:%M %p"),
+            delta=user_now.strftime("%a, %b %d")
+        )
+    
+    with col3:
+        cet_now = get_cet_now()
+        st.metric(
+            label="Tournament Time (CET)",
+            value=cet_now.strftime("%I:%M %p"),
+            delta=cet_now.strftime("%a, %b %d")
+        )
+    
+    st.divider()
+
+
 def page_calendar(model, profiles):
     """Match Calendar page."""
     st.header("📅 Match Calendar & Predictions")
+    
+    # Timezone selector at top of page
+    render_timezone_selector()
     
     # Refresh button
     col_refresh, col_info = st.columns([1, 4])
@@ -1020,22 +1064,7 @@ def main():
     if 'user_timezone' not in st.session_state:
         st.session_state['user_timezone'] = 'US/Central'
     
-    # Timezone selector
-    st.sidebar.markdown("### 🕐 Your Timezone")
-    current_tz = st.session_state.get('user_timezone', 'US/Central')
-    tz_keys = list(TIMEZONE_OPTIONS.keys())
-    current_index = tz_keys.index(current_tz) if current_tz in tz_keys else 1
-    
-    selected_tz = st.sidebar.selectbox(
-        "Select timezone",
-        options=tz_keys,
-        format_func=lambda x: TIMEZONE_OPTIONS[x],
-        index=current_index,
-        label_visibility="collapsed"
-    )
-    st.session_state['user_timezone'] = selected_tz
-    
-    # Show current time in user's timezone
+    # Show current time in user's timezone (selector is on main page)
     user_now = get_user_now()
     st.sidebar.caption(f"📍 {user_now.strftime('%a, %b %d • %I:%M %p')} ({get_user_timezone_name()})")
     
