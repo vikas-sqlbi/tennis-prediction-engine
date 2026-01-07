@@ -13,6 +13,7 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta
 from pathlib import Path
 import sys
+from zoneinfo import ZoneInfo
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
@@ -40,6 +41,17 @@ def clean_time_display(time_str: str) -> str:
     if match:
         return match.group(1)
     return str(time_str)[:5] if len(str(time_str)) > 5 else str(time_str)
+
+
+def get_user_now() -> datetime:
+    """Get current datetime in user's selected timezone.
+    
+    FIX: Streamlit Cloud runs on UTC servers. This function uses the user's
+    selected timezone to determine 'today', 'tomorrow', etc. correctly.
+    """
+    tz_name = st.session_state.get('user_timezone', 'US/Central')
+    user_tz = ZoneInfo(tz_name)
+    return datetime.now(user_tz)
 
 
 # =============================================================================
@@ -141,20 +153,22 @@ def page_calendar(model, profiles):
         st.info(f"📡 Scraped **{len(upcoming)} matches** from TennisExplorer (auto-refreshes every 30 min)")
     
     # Ensure date_label column exists (for backwards compatibility)
-    if 'date_label' not in upcoming.columns:
-        today_str = datetime.now().strftime("%Y-%m-%d")
-        yesterday_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-        tomorrow_str = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
-        
-        def assign_label(d):
-            if d == today_str:
-                return 'Today'
-            elif d == yesterday_str:
-                return 'Yesterday'
-            elif d == tomorrow_str:
-                return 'Tomorrow'
-            return 'Other'
-        upcoming['date_label'] = upcoming['date'].apply(assign_label)
+    # FIX: Use user's timezone instead of server UTC time
+    user_now = get_user_now()
+    today_str = user_now.strftime("%Y-%m-%d")
+    yesterday_str = (user_now - timedelta(days=1)).strftime("%Y-%m-%d")
+    tomorrow_str = (user_now + timedelta(days=1)).strftime("%Y-%m-%d")
+    
+    def assign_label(d):
+        if d == today_str:
+            return 'Today'
+        elif d == yesterday_str:
+            return 'Yesterday'
+        elif d == tomorrow_str:
+            return 'Tomorrow'
+        return 'Other'
+    # Always recalculate labels based on user timezone
+    upcoming['date_label'] = upcoming['date'].apply(assign_label)
     
     # Determine match status for all matches
     def get_match_status(row):
@@ -346,10 +360,11 @@ def page_calendar(model, profiles):
         except:
             return None
     
-    # Date strings for comparison
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    tomorrow_str = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
-    yesterday_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    # Date strings for comparison (using user's timezone)
+    user_now = get_user_now()
+    today_str = user_now.strftime("%Y-%m-%d")
+    tomorrow_str = (user_now + timedelta(days=1)).strftime("%Y-%m-%d")
+    yesterday_str = (user_now - timedelta(days=1)).strftime("%Y-%m-%d")
     
     # Main tabs: Upcoming and Finished
     tab_upcoming, tab_finished = st.tabs(["⏰ Upcoming", "✅ Finished"])
@@ -572,10 +587,11 @@ def page_upsets(model, profiles):
                 
                 st.info(f"💡 {row['Explanation']}")
     
-    # Date strings for comparison
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    tomorrow_str = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
-    yesterday_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    # Date strings for comparison (using user's timezone)
+    user_now = get_user_now()
+    today_str = user_now.strftime("%Y-%m-%d")
+    tomorrow_str = (user_now + timedelta(days=1)).strftime("%Y-%m-%d")
+    yesterday_str = (user_now - timedelta(days=1)).strftime("%Y-%m-%d")
     
     # Main tabs: Upcoming and Finished
     tab_upcoming, tab_finished = st.tabs(["⏰ Upcoming Upsets", "✅ Finished Upsets"])
@@ -959,6 +975,28 @@ def main():
     
     # Data summary in sidebar
     st.sidebar.title("🎾 Navigation")
+    
+    # Timezone selector for correct "Today" display
+    TIMEZONE_OPTIONS = {
+        "US/Eastern": "🇺🇸 US Eastern",
+        "US/Central": "🇺🇸 US Central", 
+        "US/Pacific": "🇺🇸 US Pacific",
+        "Europe/London": "🇬🇧 London",
+        "Europe/Paris": "🇪🇺 Paris",
+        "Asia/Kolkata": "🇮🇳 India",
+        "Australia/Sydney": "🇦🇺 Sydney",
+        "UTC": "🌐 UTC",
+    }
+    selected_tz = st.sidebar.selectbox(
+        "🕐 Your Timezone",
+        options=list(TIMEZONE_OPTIONS.keys()),
+        format_func=lambda x: TIMEZONE_OPTIONS[x],
+        index=1,  # Default to US Central
+        help="Select your timezone for accurate 'Today/Tomorrow' labels"
+    )
+    # Store in session state for use throughout the app
+    st.session_state['user_timezone'] = selected_tz
+    
     st.sidebar.markdown("---")
     
     # Navigation tabs
