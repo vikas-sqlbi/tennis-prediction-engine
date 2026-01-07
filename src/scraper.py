@@ -489,7 +489,7 @@ PLAYER_NAME_MAP = {
 }
 
 
-def scrape_tennis_explorer(include_tomorrow: bool = True, include_yesterday: bool = True) -> pd.DataFrame:
+def scrape_tennis_explorer(include_tomorrow: bool = True, include_yesterday: bool = True, include_two_days_ago: bool = True) -> pd.DataFrame:
     """
     Scrape upcoming matches from TennisExplorer.
     Extracts match times, detects live matches, and fetches scores.
@@ -500,6 +500,7 @@ def scrape_tennis_explorer(include_tomorrow: bool = True, include_yesterday: boo
     Args:
         include_tomorrow: If True, also scrape tomorrow's matches
         include_yesterday: If True, also scrape yesterday's completed matches
+        include_two_days_ago: If True, also scrape 2 days ago (for users in timezones behind CET)
     """
     seen_matches = {}  # Track unique matches: key -> match dict
     
@@ -629,6 +630,28 @@ def scrape_tennis_explorer(include_tomorrow: bool = True, include_yesterday: boo
                 match['status'] = 'completed'  # Ensure status is set
                 seen_matches[key] = match
     
+    # Scrape 2 days ago results if requested - needed for users in timezones behind CET
+    # E.g., US user's "yesterday" might be CET's "2 days ago"
+    if include_two_days_ago:
+        two_days_ago_cet = now_cet - timedelta(days=2)
+        two_days_ago_str = two_days_ago_cet.strftime("%Y-%m-%d")
+        
+        two_days_ago_results = _scrape_results_page(two_days_ago_cet)
+        for match in two_days_ago_results:
+            match_time = match.get('time', '')
+            if match_time and match_time not in ['Finished', 'TBD', '']:
+                datetime_local, _, _ = convert_te_time_to_local(two_days_ago_str, match_time)
+                match['datetime_local'] = datetime_local.isoformat() if datetime_local else None
+            
+            # Mark as from 2 days ago - use CET date
+            match['source_day'] = 'TwoDaysAgo'
+            match['date'] = two_days_ago_str
+            
+            key = make_key(match)
+            if key not in seen_matches:
+                match['status'] = 'completed'
+                seen_matches[key] = match
+    
     all_matches = list(seen_matches.values())
     
     # Filter out WTA tournaments (we only have ATP historical data)
@@ -663,7 +686,7 @@ def scrape_tennis_explorer(include_tomorrow: bool = True, include_yesterday: boo
         # Use source_day for date_label - this is set based on which page we scraped from
         # This is more reliable than timezone-converted dates
         source_day = match.get('source_day')
-        if source_day in ['Yesterday', 'Today', 'Tomorrow']:
+        if source_day in ['Yesterday', 'Today', 'Tomorrow', 'TwoDaysAgo']:
             match['date_label'] = source_day
         else:
             # Fallback: determine from date string (using CET dates)
@@ -672,6 +695,7 @@ def scrape_tennis_explorer(include_tomorrow: bool = True, include_yesterday: boo
             today_cet_str = now_cet.strftime("%Y-%m-%d")
             yesterday_cet_str = (now_cet - timedelta(days=1)).strftime("%Y-%m-%d")
             tomorrow_cet_str = (now_cet + timedelta(days=1)).strftime("%Y-%m-%d")
+            two_days_ago_cet_str = (now_cet - timedelta(days=2)).strftime("%Y-%m-%d")
             match_date = match.get('date', '')
             
             if match_date == today_cet_str:
@@ -680,6 +704,8 @@ def scrape_tennis_explorer(include_tomorrow: bool = True, include_yesterday: boo
                 match['date_label'] = 'Yesterday'
             elif match_date == tomorrow_cet_str:
                 match['date_label'] = 'Tomorrow'
+            elif match_date == two_days_ago_cet_str:
+                match['date_label'] = 'TwoDaysAgo'
             else:
                 continue  # Outside our window
         

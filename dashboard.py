@@ -366,9 +366,7 @@ def page_calendar(model, profiles):
         (upcoming['date_label'].isin(['Today', 'Yesterday']))
     ]
     
-    # DEBUG: Show counts before and after filtering
-    all_finished = upcoming[upcoming['_status'] == 'finished']
-    st.sidebar.caption(f"🔍 Debug: All finished={len(all_finished)}, filtered to Today/Yesterday={len(finished_matches)}")
+
     
     # Filters section - visible before tabs
     st.subheader("🔍 Filters")
@@ -560,11 +558,6 @@ def page_calendar(model, profiles):
         yesterday_finished = filtered_finished[filtered_finished['_user_date'] == yesterday_str]
         
         st.write(f"**{len(filtered_finished)}** finished matches total")
-        
-        # DEBUG: Show what user dates exist in finished matches
-        if len(filtered_finished) > 0:
-            unique_user_dates = filtered_finished['_user_date'].unique().tolist()
-            st.caption(f"🔍 Debug: User dates in finished: {unique_user_dates}, looking for today={today_str}, yesterday={yesterday_str}")
         
         sub_today_fin, sub_yesterday_fin = st.tabs([f"📅 Today ({today_str}) - {len(today_finished)}", f"📅 Yesterday ({yesterday_str}) - {len(yesterday_finished)}"])
         
