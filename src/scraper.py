@@ -589,20 +589,27 @@ def scrape_tennis_explorer(include_tomorrow: bool = True, include_yesterday: boo
     
     # Fetch today's results/scores from results page
     # Times are already in CST from the cookie
+    # Note: _scrape_results_page sets match['date'] = date_str from the URL parameter
     today_results = _scrape_results_page(today)
     for match in today_results:
-        # Mark as from today's results - date is already in CST
-        match['source_day'] = 'Today'
-        match['date'] = today_str
+        # Set source_day based on the actual match date (already set by _scrape_results_page)
+        match_date = match.get('date', today_str)
+        if match_date == today_str:
+            match['source_day'] = 'Today'
+        elif match_date == yesterday_str:
+            match['source_day'] = 'Yesterday'
+        else:
+            match['source_day'] = 'Today'  # Default for edge cases
         
         key = make_key(match)
         # Always prefer completed results - they have scores
         if key in seen_matches:
-            # Update existing match with score
+            # Update existing match with score and correct date/source_day
             seen_matches[key]['score'] = match.get('score')
             seen_matches[key]['winner'] = match.get('winner')
             seen_matches[key]['status'] = match.get('status', 'completed')
-            seen_matches[key]['source_day'] = 'Today'
+            seen_matches[key]['date'] = match.get('date')  # Use the time-inferred date
+            seen_matches[key]['source_day'] = match.get('source_day')
         else:
             # Add completed match we didn't have
             seen_matches[key] = match
@@ -622,26 +629,10 @@ def scrape_tennis_explorer(include_tomorrow: bool = True, include_yesterday: boo
                 if key not in seen_matches:
                     seen_matches[key] = match
     
-    # Scrape yesterday's results if requested
-    if include_yesterday:
-        yesterday_cst = now_cst - timedelta(days=1)
-        
-        yesterday_results = _scrape_results_page(yesterday_cst)
-        for match in yesterday_results:
-            # Mark as from yesterday's results - date is already in CST
-            match['source_day'] = 'Yesterday'
-            match['date'] = yesterday_str
-            
-            key = make_key(match)
-            if key in seen_matches:
-                # Match already exists from today's page - update with completed info
-                seen_matches[key]['score'] = match.get('score')
-                seen_matches[key]['winner'] = match.get('winner')
-                seen_matches[key]['status'] = 'completed'
-            else:
-                # New match only from yesterday's page
-                match['status'] = 'completed'
-                seen_matches[key] = match
+    # Note: We no longer need to scrape yesterday separately.
+    # Today's results page includes yesterday's matches (due to TennisExplorer's rolling window),
+    # and _scrape_results_page now uses time-based logic to assign the correct date to each match.
+    # This eliminates duplication between Today and Yesterday tabs.
     
     all_matches = list(seen_matches.values())
     
@@ -898,21 +889,26 @@ def _scrape_results_page(date: datetime) -> List[Dict]:
     Scrape completed match results with scores from TennisExplorer results page.
     
     Args:
-        date: The date to get results for
+        date: The date to get results for (used as the upper bound for results)
+    
+    Note: TennisExplorer returns a rolling window of completed matches, not filtered
+    by date. We use the match time to determine the actual date - if the match time
+    is after the current time, it must have finished yesterday.
     """
     date_str = date.strftime("%Y-%m-%d")
-    is_today = date.date() == datetime.now(USER_TIMEZONE).date()
+    yesterday_str = (date - timedelta(days=1)).strftime("%Y-%m-%d")
     
-    # Use year/month/day format which properly filters by date
+    # Get current time in CST for date inference
+    now_cst = datetime.now(USER_TIMEZONE)
+    current_hour = now_cst.hour
+    current_minute = now_cst.minute
+    
+    # Always use explicit year/month/day format
     year = date.year
     month = date.month
     day = date.day
     
-    if is_today:
-        url = "https://www.tennisexplorer.com/results/"
-    else:
-        # Use the correct URL format that properly filters to specific date
-        url = f"https://www.tennisexplorer.com/results/?type=atp-single&year={year}&month={month:02d}&day={day:02d}"
+    url = f"https://www.tennisexplorer.com/results/?type=atp-single&year={year}&month={month:02d}&day={day:02d}"
     
     try:
         session = get_te_session()
@@ -1015,9 +1011,26 @@ def _scrape_results_page(date: datetime) -> List[Dict]:
                                     
                                     score_str = " ".join(set_scores) if set_scores else f"{p1_sets}-{p2_sets} sets"
                                 
+                                # Determine actual match date based on finish time
+                                # If match time is after current time, it finished yesterday
+                                match_time_str = clean_time_field(time_cell.get_text(strip=True)) or "Finished"
+                                actual_date = date_str  # Default to requested date
+                                
+                                if match_time_str and ':' in match_time_str:
+                                    try:
+                                        time_parts = match_time_str.split(':')
+                                        match_hour = int(time_parts[0])
+                                        match_minute = int(time_parts[1]) if len(time_parts) > 1 else 0
+                                        
+                                        # If match time is after current time, it must have been yesterday
+                                        if match_hour > current_hour or (match_hour == current_hour and match_minute > current_minute):
+                                            actual_date = yesterday_str
+                                    except (ValueError, IndexError):
+                                        pass  # Keep default date
+                                
                                 matches.append({
-                                    'date': date_str,
-                                    'time': clean_time_field(time_cell.get_text(strip=True)) or "Finished",
+                                    'date': actual_date,
+                                    'time': match_time_str,
                                     'tournament': current_tournament,
                                     'surface': current_surface,
                                     'player1': player1,
@@ -1037,7 +1050,10 @@ def _scrape_results_page(date: datetime) -> List[Dict]:
         
         i += 1
     
-    logger.info(f"Scraped {len(matches)} completed results for {date_str}")
+    # Count matches by date
+    today_count = sum(1 for m in matches if m['date'] == date_str)
+    yesterday_count = sum(1 for m in matches if m['date'] == yesterday_str)
+    logger.info(f"Scraped {len(matches)} completed results (today: {today_count}, yesterday: {yesterday_count})")
     return matches
 
 
