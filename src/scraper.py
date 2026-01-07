@@ -12,16 +12,13 @@ from bs4 import BeautifulSoup
 import re
 import logging
 
-try:
-    from zoneinfo import ZoneInfo
-except ImportError:
-    from backports.zoneinfo import ZoneInfo
+import pytz
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Target timezone for scraping (US Central Time - handles DST automatically)
-USER_TIMEZONE = ZoneInfo("America/Chicago")
+USER_TIMEZONE = pytz.timezone("America/Chicago")
 
 
 def get_current_timezone_offset() -> int:
