@@ -520,15 +520,16 @@ def scrape_tennis_explorer(include_tomorrow: bool = True, include_yesterday: boo
     
     # Scrape today first (all categories)
     # IMPORTANT: TennisExplorer uses CET timezone for its date-based URLs
-    # We must use CET dates for URLs, not local dates
+    # We must use CET dates consistently throughout to avoid timezone mismatch issues
+    # FIX: Use CET dates for match 'date' field, not server local time (which is UTC on Streamlit Cloud)
     now_cet = datetime.now(TE_TIMEZONE)
     today = now_cet
     today_str = now_cet.strftime("%Y-%m-%d")  # CET date string for TennisExplorer URLs
-    today_local_str = datetime.now().astimezone().strftime("%Y-%m-%d")
-    yesterday_local_str = (datetime.now().astimezone() - timedelta(days=1)).strftime("%Y-%m-%d")
-    tomorrow_local_str = (datetime.now().astimezone() + timedelta(days=1)).strftime("%Y-%m-%d")
+    today_cet_str = today_str  # Use CET date for match dates (not server local time)
+    yesterday_cet_str = (now_cet - timedelta(days=1)).strftime("%Y-%m-%d")
+    tomorrow_cet_str = (now_cet + timedelta(days=1)).strftime("%Y-%m-%d")
     
-    logger.info(f"Scraping with CET date: {today_str}, Local date: {today_local_str}")
+    logger.info(f"Scraping with CET date: {today_str} (all dates stored in CET)")
     
     for cat_type in category_types:
         today_matches = _scrape_tennis_explorer_date(today, category_type=cat_type)
@@ -536,7 +537,7 @@ def scrape_tennis_explorer(include_tomorrow: bool = True, include_yesterday: boo
             # All matches from CET "today" page are considered "Today" for our purposes
             # The user wants to see what's happening now/soon, not strict local date matching
             match['source_day'] = 'Today'
-            match['date'] = today_local_str
+            match['date'] = today_cet_str
             
             key = make_key(match)
             if key not in seen_matches:
@@ -549,8 +550,7 @@ def scrape_tennis_explorer(include_tomorrow: bool = True, include_yesterday: boo
                 seen_matches[key]['tournament'] = match['tournament']
     
     # Fetch today's results/scores from results page
-    # Use local timezone for date comparison
-    today_local_str = datetime.now().astimezone().strftime("%Y-%m-%d")
+    # FIX: Use CET date consistently (not server local time)
     today_results = _scrape_results_page(today)
     for match in today_results:
         # Convert the CET datetime to local datetime for sorting
@@ -561,9 +561,9 @@ def scrape_tennis_explorer(include_tomorrow: bool = True, include_yesterday: boo
             datetime_local, _, local_time = convert_te_time_to_local(match_cet_date, match_time)
             match['datetime_local'] = datetime_local.isoformat() if datetime_local else None
         
-        # Mark as from today's results - use source page, not timezone-converted date
+        # Mark as from today's results - use CET date consistently
         match['source_day'] = 'Today'
-        match['date'] = today_local_str  # Keep local date for display
+        match['date'] = today_cet_str  # Use CET date for consistency
         
         key = make_key(match)
         # Always prefer completed results - they have scores
@@ -588,9 +588,9 @@ def scrape_tennis_explorer(include_tomorrow: bool = True, include_yesterday: boo
             tomorrow_matches = _scrape_tennis_explorer_date(tomorrow_cet, category_type=cat_type)
             for match in tomorrow_matches:
                 # Matches from tomorrow's page are TOMORROW matches
-                # Use source page as the label, not timezone-converted date
+                # FIX: Use CET date consistently
                 match['source_day'] = 'Tomorrow'
-                match['date'] = tomorrow_local_str
+                match['date'] = tomorrow_cet_str
                 
                 key = make_key(match)
                 # Only add if we don't already have this match from today's page
@@ -611,9 +611,9 @@ def scrape_tennis_explorer(include_tomorrow: bool = True, include_yesterday: boo
                 datetime_local, _, _ = convert_te_time_to_local(yesterday_str, match_time)
                 match['datetime_local'] = datetime_local.isoformat() if datetime_local else None
             
-            # Mark as from yesterday's results
+            # Mark as from yesterday's results - FIX: Use CET date consistently
             match['source_day'] = 'Yesterday'
-            match['date'] = yesterday_local_str
+            match['date'] = yesterday_cet_str
             
             key = make_key(match)
             if key in seen_matches:
@@ -666,17 +666,19 @@ def scrape_tennis_explorer(include_tomorrow: bool = True, include_yesterday: boo
         if source_day in ['Yesterday', 'Today', 'Tomorrow']:
             match['date_label'] = source_day
         else:
-            # Fallback: determine from date string
-            today_local_str = now_local.strftime("%Y-%m-%d")
-            yesterday_local_str = (now_local - timedelta(days=1)).strftime("%Y-%m-%d")
-            tomorrow_local_str = (now_local + timedelta(days=1)).strftime("%Y-%m-%d")
+            # Fallback: determine from date string (using CET dates)
+            # FIX: Use CET timezone for consistency with stored match dates
+            now_cet = datetime.now(TE_TIMEZONE)
+            today_cet_str = now_cet.strftime("%Y-%m-%d")
+            yesterday_cet_str = (now_cet - timedelta(days=1)).strftime("%Y-%m-%d")
+            tomorrow_cet_str = (now_cet + timedelta(days=1)).strftime("%Y-%m-%d")
             match_date = match.get('date', '')
             
-            if match_date == today_local_str:
+            if match_date == today_cet_str:
                 match['date_label'] = 'Today'
-            elif match_date == yesterday_local_str:
+            elif match_date == yesterday_cet_str:
                 match['date_label'] = 'Yesterday'
-            elif match_date == tomorrow_local_str:
+            elif match_date == tomorrow_cet_str:
                 match['date_label'] = 'Tomorrow'
             else:
                 continue  # Outside our window
