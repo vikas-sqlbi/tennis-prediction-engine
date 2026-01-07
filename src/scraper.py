@@ -628,16 +628,16 @@ def scrape_tennis_explorer(include_tomorrow: bool = True, include_yesterday: boo
                     seen_matches[key]['score'] = match.get('score')
                     seen_matches[key]['winner'] = match.get('winner')
                     seen_matches[key]['status'] = 'completed'
-                    seen_matches[key]['date'] = yesterday_cet_str
+                    # DON'T overwrite date - keep original scheduled start date
                     seen_matches[key]['source_day'] = 'Yesterday'
-                    if match.get('datetime_local'):
+                    if match.get('datetime_local') and not existing.get('datetime_local'):
                         seen_matches[key]['datetime_local'] = match['datetime_local']
                 # If already completed from today, just ensure we have score/winner
                 elif not existing.get('score') and match.get('score'):
                     seen_matches[key]['score'] = match.get('score')
                     seen_matches[key]['winner'] = match.get('winner')
             else:
-                # New match from yesterday's page
+                # New match from yesterday's page (not seen before)
                 match['status'] = 'completed'
                 seen_matches[key] = match
     
