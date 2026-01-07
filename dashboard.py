@@ -90,6 +90,47 @@ def get_cet_now() -> datetime:
     return datetime.now(cet_tz)
 
 
+def convert_cet_to_user_tz(time_str: str, match_date: str = None) -> str:
+    """Convert match time from CET (TennisExplorer timezone) to user's selected timezone.
+    
+    Args:
+        time_str: Time string like "14:30" in CET timezone
+        match_date: Optional date string "YYYY-MM-DD" for accurate DST handling
+        
+    Returns:
+        Converted time string in user's timezone (e.g., "08:30" for US/Central)
+    """
+    if not time_str or time_str in ('TBD', 'LIVE', 'FIN', ''):
+        return time_str
+    
+    # Extract just the time portion (HH:MM)
+    match = re.match(r'^(\d{1,2}):(\d{2})', str(time_str))
+    if not match:
+        return time_str
+    
+    hour, minute = int(match.group(1)), int(match.group(2))
+    
+    # Use match date if provided, otherwise use CET today
+    if match_date:
+        try:
+            base_date = datetime.strptime(match_date, "%Y-%m-%d")
+        except ValueError:
+            base_date = get_cet_now()
+    else:
+        base_date = get_cet_now()
+    
+    # Create CET datetime
+    cet_tz = ZoneInfo("Europe/Paris")
+    cet_dt = datetime(base_date.year, base_date.month, base_date.day, hour, minute, tzinfo=cet_tz)
+    
+    # Convert to user's timezone
+    user_tz_name = st.session_state.get('user_timezone', 'US/Central')
+    user_tz = ZoneInfo(user_tz_name)
+    user_dt = cet_dt.astimezone(user_tz)
+    
+    return user_dt.strftime("%H:%M")
+
+
 # =============================================================================
 # DATA LOADING
 # =============================================================================
@@ -328,7 +369,9 @@ def page_calendar(model, profiles):
             cols = st.columns([1, 3, 2, 2])
             
             with cols[0]:
-                match_time = clean_time_display(match.get('time', 'TBD'))
+                raw_time = clean_time_display(match.get('time', 'TBD'))
+                match_date = match.get('date', '')
+                match_time = convert_cet_to_user_tz(raw_time, match_date)
                 is_finished = match.get('status') == 'completed'
                 
                 if is_finished:
@@ -578,7 +621,9 @@ def page_upsets(model, profiles):
     def find_upsets(matches_df):
         upsets = []
         for _, match in matches_df.iterrows():
-            match_time = clean_time_display(match.get('time', 'TBD'))
+            raw_time = clean_time_display(match.get('time', 'TBD'))
+            match_date = match.get('date', '')
+            match_time = convert_cet_to_user_tz(raw_time, match_date)
             is_finished = match.get('status') == 'completed'
             
             pred = model.predict_match(
