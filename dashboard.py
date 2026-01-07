@@ -405,9 +405,16 @@ def page_calendar(model, profiles):
     with tab_upcoming:
         filtered_upcoming = apply_filters(upcoming_matches)
         
-        # Split by date_label (already set by scraper) - use .copy() for separate dataframes
-        today_upcoming = filtered_upcoming[filtered_upcoming['date_label'] == 'Today'].copy()
-        tomorrow_upcoming = filtered_upcoming[filtered_upcoming['date_label'] == 'Tomorrow'].copy()
+        # Split by date_label AND verify with actual date field to prevent cross-contamination
+        today_upcoming = filtered_upcoming[
+            (filtered_upcoming['date_label'] == 'Today') | 
+            (filtered_upcoming['date'] == today_str)
+        ].copy()
+        # Tomorrow: must have Tomorrow label AND tomorrow's date (strict check)
+        tomorrow_upcoming = filtered_upcoming[
+            (filtered_upcoming['date_label'] == 'Tomorrow') & 
+            (filtered_upcoming['date'] == tomorrow_str)
+        ].copy()
         
         # Count upsets if filter is on
         if show_upsets_only:
