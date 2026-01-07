@@ -836,16 +836,16 @@ def _scrape_tennis_explorer_date(date: datetime, category_type: str = None) -> L
                                 if is_live:
                                     display_time = "LIVE"
                                     local_date = current_date
-                                    local_time = "LIVE"
                                     datetime_local = None
                                 elif time_text and time_text != '&nbsp;' and time_text != '--:--':
-                                    # Convert CET time to local timezone
-                                    datetime_local, local_date, local_time = convert_te_time_to_local(current_date, time_text)
-                                    display_time = local_time
+                                    # Keep time in CET - dashboard will convert to user's timezone
+                                    display_time = time_text
+                                    local_date = current_date
+                                    # Still calculate datetime_local for sorting/filtering
+                                    datetime_local, _, _ = convert_te_time_to_local(current_date, time_text)
                                 else:
                                     display_time = "TBD"
                                     local_date = current_date
-                                    local_time = "TBD"
                                     datetime_local = None
                                 
                                 # Determine favorite based on odds (lower odds = favorite)
