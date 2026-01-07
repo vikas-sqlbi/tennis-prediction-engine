@@ -214,6 +214,10 @@ def get_trained_model(_matches, _profiles, _profiler):
 def get_upcoming_matches():
     """Get real upcoming tournament matches from TennisExplorer."""
     from scraper import scrape_tennis_explorer, get_sample_matches
+    from zoneinfo import ZoneInfo
+    
+    # Track when scrape happens (in CET)
+    scrape_time_cet = datetime.now(ZoneInfo("Europe/Paris"))
     
     # Try to get real matches
     matches = scrape_tennis_explorer()
@@ -221,6 +225,10 @@ def get_upcoming_matches():
     if len(matches) == 0:
         st.warning("Could not fetch live matches. Showing sample data.")
         return get_sample_matches()
+    
+    # Add scrape metadata to first row for debugging
+    if len(matches) > 0:
+        matches.attrs['scrape_time_cet'] = scrape_time_cet.isoformat()
     
     return matches
 
@@ -366,15 +374,30 @@ def page_calendar(model, profiles):
         (upcoming['date_label'].isin(['Today', 'Yesterday']))
     ]
     
-    # DEBUG: Show what user dates exist in ALL finished matches
+    # DEBUG: Show data bucketing info in sidebar
     all_finished = upcoming[upcoming['_status'] == 'finished']
+    all_upcoming_status = upcoming[upcoming['_status'] == 'upcoming']
+    st.sidebar.markdown("---")
+    st.sidebar.caption("🔍 **Debug: Match Bucketing**")
+    
+    # Show when data was scraped
+    scrape_time = upcoming.attrs.get('scrape_time_cet', 'Unknown')
+    st.sidebar.caption(f"📡 Scraped at (CET): {scrape_time[:19] if len(scrape_time) > 19 else scrape_time}")
+    st.sidebar.caption(f"User date: today={today_str}, yest={yesterday_str}, tom={tomorrow_str}")
+    
     if len(all_finished) > 0:
-        unique_user_dates = sorted(all_finished['_user_date'].unique().tolist())
-        unique_cet_dates = sorted(all_finished['date'].unique().tolist())
-        st.sidebar.caption(f"🔍 Finished: {len(all_finished)} total")
-        st.sidebar.caption(f"CET dates: {unique_cet_dates}")
-        st.sidebar.caption(f"User dates: {unique_user_dates}")
-        st.sidebar.caption(f"Looking for: today={today_str}, yest={yesterday_str}")
+        unique_user_dates_fin = sorted(all_finished['_user_date'].unique().tolist())
+        st.sidebar.caption(f"Finished ({len(all_finished)}): user_dates={unique_user_dates_fin}")
+        today_fin_count = len(all_finished[all_finished['_user_date'] == today_str])
+        yest_fin_count = len(all_finished[all_finished['_user_date'] == yesterday_str])
+        st.sidebar.caption(f"  → Today: {today_fin_count}, Yest: {yest_fin_count}")
+    
+    if len(all_upcoming_status) > 0:
+        unique_user_dates_up = sorted(all_upcoming_status['_user_date'].unique().tolist())
+        st.sidebar.caption(f"Upcoming ({len(all_upcoming_status)}): user_dates={unique_user_dates_up}")
+        today_up_count = len(all_upcoming_status[all_upcoming_status['_user_date'] == today_str])
+        tom_up_count = len(all_upcoming_status[all_upcoming_status['_user_date'] == tomorrow_str])
+        st.sidebar.caption(f"  → Today: {today_up_count}, Tom: {tom_up_count}")
     
     # Filters section - visible before tabs
     st.subheader("🔍 Filters")
@@ -533,7 +556,11 @@ def page_calendar(model, profiles):
                 displayed += 1
         
         if displayed == 0:
-            st.info("No matches match your filter criteria.")
+            if show_upsets_only:
+                st.info(f"No upset predictions found in these {len(matches_df)} matches. "
+                       "Upsets require underdog to be predicted winner.")
+            else:
+                st.info("No matches match your filter criteria.")
         return displayed
     
     # Main tabs: Upcoming and Finished
