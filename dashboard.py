@@ -395,27 +395,59 @@ def page_calendar(model, profiles):
         with sub_tomorrow:
             display_day_matches(tomorrow_upcoming, model, show_upsets_only, sort_ascending=True)
     
-    # FINISHED TAB with Today/Yesterday sub-tabs
+    # FINISHED TAB - Simple combined view with prediction success/failure tracking
     with tab_finished:
         filtered_finished = apply_filters(finished_matches)
         
-        # Split by actual local date from datetime_local
-        filtered_finished['_local_date'] = filtered_finished['datetime_local'].apply(get_local_date)
-        today_finished = filtered_finished[filtered_finished['_local_date'] == today_str]
-        yesterday_finished = filtered_finished[filtered_finished['_local_date'] == yesterday_str]
-        # Include matches without datetime_local in "Today"
-        no_date_fin = filtered_finished[filtered_finished['_local_date'].isna()]
-        today_finished = pd.concat([today_finished, no_date_fin])
+        st.write(f"**{len(filtered_finished)}** finished matches")
         
-        st.write(f"**{len(filtered_finished)}** finished matches total")
+        # Calculate prediction success/failure stats
+        if len(filtered_finished) > 0:
+            success_count = 0
+            fail_count = 0
+            no_prediction_count = 0
+            
+            for _, match in filtered_finished.iterrows():
+                winner = match.get('winner')
+                if not winner:
+                    continue
+                
+                pred = model.predict_match(
+                    match['player1'], 
+                    match['player2'], 
+                    match['surface'],
+                    match.get('favorite'),
+                    tournament_name=match.get('tournament', '')
+                )
+                
+                if pred is None:
+                    no_prediction_count += 1
+                elif pred.predicted_winner == winner:
+                    success_count += 1
+                else:
+                    fail_count += 1
+            
+            total_with_predictions = success_count + fail_count
+            
+            # Display summary metrics
+            col_s, col_f, col_pct = st.columns(3)
+            with col_s:
+                st.metric("✅ Correct", success_count)
+            with col_f:
+                st.metric("❌ Wrong", fail_count)
+            with col_pct:
+                if total_with_predictions > 0:
+                    accuracy = success_count / total_with_predictions
+                    st.metric("📊 Accuracy", f"{accuracy:.1%}")
+                else:
+                    st.metric("📊 Accuracy", "N/A")
+            
+            if no_prediction_count > 0:
+                st.caption(f"({no_prediction_count} matches without predictions)")
+            
+            st.markdown("---")
         
-        sub_today_fin, sub_yesterday_fin = st.tabs([f"📅 Today ({today_str}) - {len(today_finished)}", f"📅 Yesterday ({yesterday_str}) - {len(yesterday_finished)}"])
-        
-        with sub_today_fin:
-            display_day_matches(today_finished, model, show_upsets_only, sort_ascending=False)
-        
-        with sub_yesterday_fin:
-            display_day_matches(yesterday_finished, model, show_upsets_only, sort_ascending=False)
+        display_day_matches(filtered_finished, model, show_upsets_only, sort_ascending=False)
 
 
 def page_upsets(model, profiles):
