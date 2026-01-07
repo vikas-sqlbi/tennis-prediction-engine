@@ -412,15 +412,9 @@ def page_calendar(model, profiles):
         sub_today_fin, sub_yesterday_fin = st.tabs([f"📅 Today ({today_str}) - {len(today_finished)}", f"📅 Yesterday ({yesterday_str}) - {len(yesterday_finished)}"])
         
         with sub_today_fin:
-            if len(today_finished) > 0:
-                sample_dt = today_finished.iloc[0]['datetime_local']
-                st.caption(f"🔍 {len(today_finished)} matches dated {today_str} (sample: {sample_dt})")
             display_day_matches(today_finished, model, show_upsets_only, sort_ascending=False)
         
         with sub_yesterday_fin:
-            if len(yesterday_finished) > 0:
-                sample_dt = yesterday_finished.iloc[0]['datetime_local']
-                st.caption(f"🔍 {len(yesterday_finished)} matches dated {yesterday_str} (sample: {sample_dt})")
             display_day_matches(yesterday_finished, model, show_upsets_only, sort_ascending=False)
 
 
