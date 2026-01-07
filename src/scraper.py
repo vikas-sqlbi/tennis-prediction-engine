@@ -512,12 +512,13 @@ def scrape_tennis_explorer(include_tomorrow: bool = True, include_yesterday: boo
     ]
     
     def make_key(match):
-        """Create deduplication key using players only (not date/tournament, as they can vary)."""
+        """Create deduplication key using players AND date to avoid merging matches from different days."""
         p1 = match['player1'].lower().strip()
         p2 = match['player2'].lower().strip()
         # Sort players to handle case where player order might differ
         players = tuple(sorted([p1, p2]))
-        return (players[0], players[1])
+        match_date = match.get('date', '')
+        return (players[0], players[1], match_date)
     
     # Scrape today first (all categories)
     # IMPORTANT: TennisExplorer uses CET timezone for its date-based URLs
@@ -618,16 +619,15 @@ def scrape_tennis_explorer(include_tomorrow: bool = True, include_yesterday: boo
             
             key = make_key(match)
             if key in seen_matches:
-                # Match already exists from today's page - update with completed info
+                # Same match on same date - update with score info
                 seen_matches[key]['score'] = match.get('score')
                 seen_matches[key]['winner'] = match.get('winner')
                 seen_matches[key]['status'] = 'completed'
                 if match.get('datetime_local'):
                     seen_matches[key]['datetime_local'] = match['datetime_local']
-                # Keep original source_day (Today) - don't change to Yesterday
             else:
-                # New match only from yesterday's page
-                match['status'] = 'completed'  # Ensure status is set
+                # New match from yesterday's page
+                match['status'] = 'completed'
                 seen_matches[key] = match
     
     # Scrape 2 days ago results if requested - needed for users in timezones behind CET
