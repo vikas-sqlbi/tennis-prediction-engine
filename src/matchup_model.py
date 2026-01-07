@@ -725,21 +725,24 @@ class MatchupModel:
         predicted_winner = player1_name if p1_win_prob > 0.5 else player2_name
         confidence = max(p1_win_prob, p2_win_prob)
         
-        # Determine favorite/underdog
+        # FIX: NaN Market Odds Handling (bug/fixing-scraper-odds-nan)
+        # Previously, when market odds were NaN, we incorrectly used win_pct as a fallback
+        # to determine favorite/underdog. This caused favorites to be mislabeled as underdogs.
+        # Now we ONLY use market odds to determine favorite/underdog.
+        # If odds are NaN/unavailable, favorite and underdog are set to None.
         if favorite:
             fav = favorite
             underdog = player2_name if favorite == player1_name else player1_name
         else:
-            # Use win percentage as proxy for favorite
-            if p1.get('overall_win_pct', 0.5) > p2.get('overall_win_pct', 0.5):
-                fav = player1_name
-                underdog = player2_name
-            else:
-                fav = player2_name
-                underdog = player1_name
+            # No market odds available - cannot determine favorite/underdog
+            fav = None
+            underdog = None
         
-        # Calculate upset probability
-        if fav == player1_name:
+        # FIX: Upset probability requires valid market odds
+        # Without knowing who the market favorite is, upset probability is meaningless
+        if fav is None:
+            upset_prob = 0.0  # Cannot calculate upset without market odds
+        elif fav == player1_name:
             upset_prob = p2_win_prob  # Underdog (p2) winning
         else:
             upset_prob = p1_win_prob  # Underdog (p1) winning
@@ -816,12 +819,18 @@ class MatchupModel:
         p1: pd.Series, 
         p2: pd.Series, 
         surface: str,
-        favorite: str,
-        underdog: str,
+        favorite: Optional[str],
+        underdog: Optional[str],
         tourney_level: str = 'A'
     ) -> List[str]:
         """Identify key factors that could lead to an upset."""
         factors = []
+        
+        # FIX: Handle missing market odds gracefully
+        # When favorite/underdog are None (due to NaN odds), return neutral message
+        if favorite is None or underdog is None:
+            factors.append("No market odds available - cannot assess upset factors")
+            return factors
         
         # Determine which profile is the underdog
         if underdog in str(p1.get('player_name', '')):
@@ -895,8 +904,8 @@ class MatchupModel:
     def _generate_upset_explanation(
         self,
         predicted_winner: str,
-        favorite: str,
-        underdog: str,
+        favorite: Optional[str],
+        underdog: Optional[str],
         key_factors: List[str],
         confidence: float,
         p1: pd.Series,
@@ -905,6 +914,11 @@ class MatchupModel:
         """
         Generate a human-readable explanation for why an upset is or isn't predicted.
         """
+        # FIX: Provide neutral explanation when market odds are NaN
+        # Without market odds, we cannot determine if prediction is an "upset"
+        if favorite is None or underdog is None:
+            return f"{predicted_winner} predicted to win ({confidence:.0%} confidence). Market odds unavailable - upset status unknown."
+        
         is_upset = predicted_winner == underdog
         
         if is_upset:
