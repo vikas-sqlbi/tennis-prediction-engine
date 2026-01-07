@@ -364,10 +364,11 @@ def page_calendar(model, profiles):
         except:
             return None
     
-    # Date strings for comparison
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    tomorrow_str = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
-    yesterday_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    # Date strings for comparison - use CST to match scraper data
+    now_cst = dt.now(USER_TIMEZONE)
+    today_str = now_cst.strftime("%Y-%m-%d")
+    tomorrow_str = (now_cst + timedelta(days=1)).strftime("%Y-%m-%d")
+    yesterday_str = (now_cst - timedelta(days=1)).strftime("%Y-%m-%d")
     
     # Main tabs: Upcoming and Finished
     tab_upcoming, tab_finished = st.tabs(["⏰ Upcoming", "✅ Finished"])
@@ -419,6 +420,8 @@ def page_calendar(model, profiles):
 
 def page_upsets(model, profiles):
     """Upset Alerts page."""
+    from scraper import USER_TIMEZONE
+    from datetime import datetime as dt
     st.header("🎯 Upset Alerts")
     st.write("Matches where we predict the underdog to win, sorted by value (confidence × odds)")
     
@@ -590,10 +593,11 @@ def page_upsets(model, profiles):
                 
                 st.info(f"💡 {row['Explanation']}")
     
-    # Date strings for comparison
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    tomorrow_str = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
-    yesterday_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    # Date strings for comparison - use CST to match scraper data
+    now_cst = dt.now(USER_TIMEZONE)
+    today_str = now_cst.strftime("%Y-%m-%d")
+    tomorrow_str = (now_cst + timedelta(days=1)).strftime("%Y-%m-%d")
+    yesterday_str = (now_cst - timedelta(days=1)).strftime("%Y-%m-%d")
     
     # Main tabs: Upcoming and Finished
     tab_upcoming, tab_finished = st.tabs(["⏰ Upcoming Upsets", "✅ Finished Upsets"])
