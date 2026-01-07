@@ -402,13 +402,17 @@ def page_calendar(model, profiles):
     with tab_finished:
         filtered_finished = apply_filters(finished_matches)
         
-        # Split by actual local date from datetime_local
-        filtered_finished['_local_date'] = filtered_finished['datetime_local'].apply(get_local_date)
+        # Split by actual local date from datetime_local, fallback to 'date' column
+        def get_effective_date(row):
+            local_date = get_local_date(row.get('datetime_local'))
+            if local_date:
+                return local_date
+            # Fallback to 'date' column for results scraped without datetime_local
+            return row.get('date')
+        
+        filtered_finished['_local_date'] = filtered_finished.apply(get_effective_date, axis=1)
         today_finished = filtered_finished[filtered_finished['_local_date'] == today_str]
         yesterday_finished = filtered_finished[filtered_finished['_local_date'] == yesterday_str]
-        # Include matches without datetime_local in "Today"
-        no_date_fin = filtered_finished[filtered_finished['_local_date'].isna()]
-        today_finished = pd.concat([today_finished, no_date_fin])
         
         st.write(f"**{len(filtered_finished)}** finished matches total")
         
