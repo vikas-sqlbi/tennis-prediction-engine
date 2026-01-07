@@ -420,6 +420,8 @@ def page_calendar(model, profiles):
             upset_pred_matches = []
             no_prediction_count = 0
             
+            upset_correct_count = 0
+            
             for _, match in filtered_finished.iterrows():
                 match_data = match.to_dict()
                 winner = match.get('winner')
@@ -434,11 +436,12 @@ def page_calendar(model, profiles):
                 
                 # Track prediction outcome
                 is_upset_pred = pred is not None and pred.predicted_winner == pred.underdog
+                is_correct = pred is not None and winner and pred.predicted_winner == winner
                 
                 if pred is None or not winner:
                     no_prediction_count += 1
                     match_data['_outcome'] = 'no_prediction'
-                elif pred.predicted_winner == winner:
+                elif is_correct:
                     match_data['_outcome'] = 'correct'
                     correct_matches.append(match_data)
                 else:
@@ -447,6 +450,8 @@ def page_calendar(model, profiles):
                 
                 if is_upset_pred:
                     upset_pred_matches.append(match_data)
+                    if is_correct:
+                        upset_correct_count += 1
                 
                 all_matches.append(match_data)
             
@@ -455,18 +460,20 @@ def page_calendar(model, profiles):
             upset_count = len(upset_pred_matches)
             total_with_predictions = success_count + fail_count
             
-            # Summary metrics
-            col_s, col_f, col_pct = st.columns(3)
-            with col_s:
-                st.metric("✅ Correct", success_count)
-            with col_f:
-                st.metric("❌ Wrong", fail_count)
-            with col_pct:
+            # Summary metrics - just accuracy and upset accuracy
+            col_acc, col_upset_acc = st.columns(2)
+            with col_acc:
                 if total_with_predictions > 0:
                     accuracy = success_count / total_with_predictions
-                    st.metric("📊 Accuracy", f"{accuracy:.1%}")
+                    st.metric("📊 Accuracy", f"{accuracy:.1%}", help=f"{success_count} correct, {fail_count} wrong")
                 else:
                     st.metric("📊 Accuracy", "N/A")
+            with col_upset_acc:
+                if upset_count > 0:
+                    upset_accuracy = upset_correct_count / upset_count
+                    st.metric("⚠️ Upset Accuracy", f"{upset_accuracy:.1%}", help=f"{upset_correct_count} of {upset_count} upset predictions correct")
+                else:
+                    st.metric("⚠️ Upset Accuracy", "N/A", help="No upset predictions")
             
             if no_prediction_count > 0:
                 st.caption(f"({no_prediction_count} matches without predictions)")
