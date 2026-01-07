@@ -90,6 +90,88 @@ def get_cet_now() -> datetime:
     return datetime.now(cet_tz)
 
 
+def convert_cet_to_user_tz(time_str: str, match_date: str = None) -> str:
+    """Convert match time from CET (TennisExplorer timezone) to user's selected timezone.
+    
+    Args:
+        time_str: Time string like "14:30" in CET timezone
+        match_date: Optional date string "YYYY-MM-DD" for accurate DST handling
+        
+    Returns:
+        Converted time string in user's timezone (e.g., "08:30" for US/Central)
+    """
+    if not time_str or time_str in ('TBD', 'LIVE', 'FIN', ''):
+        return time_str
+    
+    # Extract just the time portion (HH:MM)
+    match = re.match(r'^(\d{1,2}):(\d{2})', str(time_str))
+    if not match:
+        return time_str
+    
+    hour, minute = int(match.group(1)), int(match.group(2))
+    
+    # Use match date if provided, otherwise use CET today
+    if match_date:
+        try:
+            base_date = datetime.strptime(match_date, "%Y-%m-%d")
+        except ValueError:
+            base_date = get_cet_now()
+    else:
+        base_date = get_cet_now()
+    
+    # Create CET datetime
+    cet_tz = ZoneInfo("Europe/Paris")
+    cet_dt = datetime(base_date.year, base_date.month, base_date.day, hour, minute, tzinfo=cet_tz)
+    
+    # Convert to user's timezone
+    user_tz_name = st.session_state.get('user_timezone', 'US/Central')
+    user_tz = ZoneInfo(user_tz_name)
+    user_dt = cet_dt.astimezone(user_tz)
+    
+    return user_dt.strftime("%H:%M")
+
+
+def get_user_local_date_for_match(time_str: str, cet_date: str) -> str:
+    """Get the user's local date for a match based on CET time and date.
+    
+    A match at 02:00 CET on Jan 7 would be Jan 6 for US users (after timezone conversion).
+    This function returns the date in user's timezone.
+    
+    Args:
+        time_str: Time string like "14:30" in CET timezone
+        cet_date: Date string "YYYY-MM-DD" in CET
+        
+    Returns:
+        Date string in user's timezone (e.g., "2026-01-06")
+    """
+    if not time_str or time_str in ('TBD', 'LIVE', 'FIN', '') or not cet_date:
+        # For matches without valid time, use user's current date
+        return get_user_now().strftime("%Y-%m-%d")
+    
+    # Extract just the time portion (HH:MM)
+    match = re.match(r'^(\d{1,2}):(\d{2})', str(time_str))
+    if not match:
+        return get_user_now().strftime("%Y-%m-%d")
+    
+    hour, minute = int(match.group(1)), int(match.group(2))
+    
+    try:
+        base_date = datetime.strptime(cet_date, "%Y-%m-%d")
+    except ValueError:
+        return get_user_now().strftime("%Y-%m-%d")
+    
+    # Create CET datetime
+    cet_tz = ZoneInfo("Europe/Paris")
+    cet_dt = datetime(base_date.year, base_date.month, base_date.day, hour, minute, tzinfo=cet_tz)
+    
+    # Convert to user's timezone
+    user_tz_name = st.session_state.get('user_timezone', 'US/Central')
+    user_tz = ZoneInfo(user_tz_name)
+    user_dt = cet_dt.astimezone(user_tz)
+    
+    return user_dt.strftime("%Y-%m-%d")
+
+
 # =============================================================================
 # DATA LOADING
 # =============================================================================
@@ -132,6 +214,10 @@ def get_trained_model(_matches, _profiles, _profiler):
 def get_upcoming_matches():
     """Get real upcoming tournament matches from TennisExplorer."""
     from scraper import scrape_tennis_explorer, get_sample_matches
+    from zoneinfo import ZoneInfo
+    
+    # Track when scrape happens (in CET)
+    scrape_time_cet = datetime.now(ZoneInfo("Europe/Paris"))
     
     # Try to get real matches
     matches = scrape_tennis_explorer()
@@ -139,6 +225,10 @@ def get_upcoming_matches():
     if len(matches) == 0:
         st.warning("Could not fetch live matches. Showing sample data.")
         return get_sample_matches()
+    
+    # Add scrape metadata to first row for debugging
+    if len(matches) > 0:
+        matches.attrs['scrape_time_cet'] = scrape_time_cet.isoformat()
     
     return matches
 
@@ -249,8 +339,18 @@ def page_calendar(model, profiles):
             return 'Tomorrow'
         return 'Other'
     
-    # Always recalculate date_label based on user's timezone
-    upcoming['date_label'] = upcoming['date'].apply(assign_label)
+    # Helper to get user's local date for a match (converts CET to user timezone)
+    def get_match_user_date(row):
+        """Get user's local date for a match based on CET time and date."""
+        time_str = row.get('time', '')
+        cet_date = row.get('date', '')
+        return get_user_local_date_for_match(time_str, cet_date)
+    
+    # Calculate user's local date for each match FIRST (before any filtering)
+    upcoming['_user_date'] = upcoming.apply(get_match_user_date, axis=1)
+    
+    # Now assign labels based on user's local date (not raw CET date)
+    upcoming['date_label'] = upcoming['_user_date'].apply(assign_label)
     
     # Determine match status for all matches
     def get_match_status(row):
@@ -273,6 +373,31 @@ def page_calendar(model, profiles):
         (upcoming['_status'] == 'finished') & 
         (upcoming['date_label'].isin(['Today', 'Yesterday']))
     ]
+    
+    # DEBUG: Show data bucketing info in sidebar
+    all_finished = upcoming[upcoming['_status'] == 'finished']
+    all_upcoming_status = upcoming[upcoming['_status'] == 'upcoming']
+    st.sidebar.markdown("---")
+    st.sidebar.caption("🔍 **Debug: Match Bucketing**")
+    
+    # Show when data was scraped
+    scrape_time = upcoming.attrs.get('scrape_time_cet', 'Unknown')
+    st.sidebar.caption(f"📡 Scraped at (CET): {scrape_time[:19] if len(scrape_time) > 19 else scrape_time}")
+    st.sidebar.caption(f"User date: today={today_str}, yest={yesterday_str}, tom={tomorrow_str}")
+    
+    if len(all_finished) > 0:
+        unique_user_dates_fin = sorted(all_finished['_user_date'].unique().tolist())
+        st.sidebar.caption(f"Finished ({len(all_finished)}): user_dates={unique_user_dates_fin}")
+        today_fin_count = len(all_finished[all_finished['_user_date'] == today_str])
+        yest_fin_count = len(all_finished[all_finished['_user_date'] == yesterday_str])
+        st.sidebar.caption(f"  → Today: {today_fin_count}, Yest: {yest_fin_count}")
+    
+    if len(all_upcoming_status) > 0:
+        unique_user_dates_up = sorted(all_upcoming_status['_user_date'].unique().tolist())
+        st.sidebar.caption(f"Upcoming ({len(all_upcoming_status)}): user_dates={unique_user_dates_up}")
+        today_up_count = len(all_upcoming_status[all_upcoming_status['_user_date'] == today_str])
+        tom_up_count = len(all_upcoming_status[all_upcoming_status['_user_date'] == tomorrow_str])
+        st.sidebar.caption(f"  → Today: {today_up_count}, Tom: {tom_up_count}")
     
     # Filters section - visible before tabs
     st.subheader("🔍 Filters")
@@ -328,7 +453,9 @@ def page_calendar(model, profiles):
             cols = st.columns([1, 3, 2, 2])
             
             with cols[0]:
-                match_time = clean_time_display(match.get('time', 'TBD'))
+                raw_time = clean_time_display(match.get('time', 'TBD'))
+                match_date = match.get('date', '')
+                match_time = convert_cet_to_user_tz(raw_time, match_date)
                 is_finished = match.get('status') == 'completed'
                 
                 if is_finished:
@@ -429,25 +556,12 @@ def page_calendar(model, profiles):
                 displayed += 1
         
         if displayed == 0:
-            st.info("No matches match your filter criteria.")
+            if show_upsets_only:
+                st.info(f"No upset predictions found in these {len(matches_df)} matches. "
+                       "Upsets require underdog to be predicted winner.")
+            else:
+                st.info("No matches match your filter criteria.")
         return displayed
-    
-    # Helper to get local date from datetime_local string
-    def get_local_date(dt_str):
-        if not dt_str:
-            return None
-        try:
-            dt = datetime.fromisoformat(dt_str)
-            return dt.strftime("%Y-%m-%d")
-        except:
-            return None
-    
-    # Date strings for comparison (using CET - TennisExplorer timezone)
-    # FIX: Match dates are stored in CET, so compare with CET dates
-    cet_now = get_cet_now()
-    today_str = cet_now.strftime("%Y-%m-%d")
-    tomorrow_str = (cet_now + timedelta(days=1)).strftime("%Y-%m-%d")
-    yesterday_str = (cet_now - timedelta(days=1)).strftime("%Y-%m-%d")
     
     # Main tabs: Upcoming and Finished
     tab_upcoming, tab_finished = st.tabs(["⏰ Upcoming", "✅ Finished"])
@@ -456,13 +570,9 @@ def page_calendar(model, profiles):
     with tab_upcoming:
         filtered_upcoming = apply_filters(upcoming_matches)
         
-        # Split by actual local date from datetime_local
-        filtered_upcoming['_local_date'] = filtered_upcoming['datetime_local'].apply(get_local_date)
-        today_upcoming = filtered_upcoming[filtered_upcoming['_local_date'] == today_str]
-        tomorrow_upcoming = filtered_upcoming[filtered_upcoming['_local_date'] == tomorrow_str]
-        # Include matches without datetime_local in "Today"
-        no_date = filtered_upcoming[filtered_upcoming['_local_date'].isna()]
-        today_upcoming = pd.concat([today_upcoming, no_date])
+        # _user_date already computed at start, just filter by it
+        today_upcoming = filtered_upcoming[filtered_upcoming['_user_date'] == today_str]
+        tomorrow_upcoming = filtered_upcoming[filtered_upcoming['_user_date'] == tomorrow_str]
         
         st.write(f"**{len(filtered_upcoming)}** upcoming matches total")
         
@@ -478,13 +588,9 @@ def page_calendar(model, profiles):
     with tab_finished:
         filtered_finished = apply_filters(finished_matches)
         
-        # Split by actual local date from datetime_local
-        filtered_finished['_local_date'] = filtered_finished['datetime_local'].apply(get_local_date)
-        today_finished = filtered_finished[filtered_finished['_local_date'] == today_str]
-        yesterday_finished = filtered_finished[filtered_finished['_local_date'] == yesterday_str]
-        # Include matches without datetime_local in "Today"
-        no_date_fin = filtered_finished[filtered_finished['_local_date'].isna()]
-        today_finished = pd.concat([today_finished, no_date_fin])
+        # _user_date already computed at start, just filter by it
+        today_finished = filtered_finished[filtered_finished['_user_date'] == today_str]
+        yesterday_finished = filtered_finished[filtered_finished['_user_date'] == yesterday_str]
         
         st.write(f"**{len(filtered_finished)}** finished matches total")
         
@@ -578,7 +684,9 @@ def page_upsets(model, profiles):
     def find_upsets(matches_df):
         upsets = []
         for _, match in matches_df.iterrows():
-            match_time = clean_time_display(match.get('time', 'TBD'))
+            raw_time = clean_time_display(match.get('time', 'TBD'))
+            match_date = match.get('date', '')
+            match_time = convert_cet_to_user_tz(raw_time, match_date)
             is_finished = match.get('status') == 'completed'
             
             pred = model.predict_match(
@@ -602,6 +710,8 @@ def page_upsets(model, profiles):
                 upsets.append({
                     'Time': '✅ FIN' if is_finished else match_time,
                     'datetime_local': match.get('datetime_local'),
+                    'cet_time': match.get('time', ''),  # Raw CET time for date bucketing
+                    'cet_date': match.get('date', ''),  # Raw CET date for date bucketing
                     'Tournament': match['tournament'],
                     'Underdog': pred.underdog,
                     'Favorite': pred.favorite,
@@ -670,12 +780,16 @@ def page_upsets(model, profiles):
                 
                 st.info(f"💡 {row['Explanation']}")
     
-    # Date strings for comparison (using CET - TennisExplorer timezone)
-    # FIX: Match dates are stored in CET, so compare with CET dates
-    cet_now = get_cet_now()
-    today_str = cet_now.strftime("%Y-%m-%d")
-    tomorrow_str = (cet_now + timedelta(days=1)).strftime("%Y-%m-%d")
-    yesterday_str = (cet_now - timedelta(days=1)).strftime("%Y-%m-%d")
+    # Helper to get user's local date for an upset row
+    def get_upset_user_date(row):
+        """Get user's local date for an upset based on CET time and date."""
+        return get_user_local_date_for_match(row.get('cet_time', ''), row.get('cet_date', ''))
+    
+    # User's local dates for filtering AND display
+    user_now = get_user_now()
+    user_today_str = user_now.strftime("%Y-%m-%d")
+    user_tomorrow_str = (user_now + timedelta(days=1)).strftime("%Y-%m-%d")
+    user_yesterday_str = (user_now - timedelta(days=1)).strftime("%Y-%m-%d")
     
     # Main tabs: Upcoming and Finished
     tab_upcoming, tab_finished = st.tabs(["⏰ Upcoming Upsets", "✅ Finished Upsets"])
@@ -690,16 +804,14 @@ def page_upsets(model, profiles):
         if len(all_upcoming_upsets) == 0:
             st.info(f"No upcoming upset predictions found (confidence >= {min_conf:.0%})")
         else:
-            # Split by local date
-            all_upcoming_upsets['_local_date'] = all_upcoming_upsets['datetime_local'].apply(get_local_date)
-            today_upsets = all_upcoming_upsets[all_upcoming_upsets['_local_date'] == today_str]
-            tomorrow_upsets = all_upcoming_upsets[all_upcoming_upsets['_local_date'] == tomorrow_str]
-            no_date_upsets = all_upcoming_upsets[all_upcoming_upsets['_local_date'].isna()]
-            today_upsets = pd.concat([today_upsets, no_date_upsets])
+            # Convert each upset's CET datetime to user's local date for bucketing
+            all_upcoming_upsets['_user_date'] = all_upcoming_upsets.apply(get_upset_user_date, axis=1)
+            today_upsets = all_upcoming_upsets[all_upcoming_upsets['_user_date'] == user_today_str]
+            tomorrow_upsets = all_upcoming_upsets[all_upcoming_upsets['_user_date'] == user_tomorrow_str]
             
             st.write(f"**{len(all_upcoming_upsets)}** upcoming upset predictions total")
             
-            sub_today, sub_tomorrow = st.tabs([f"📅 Today ({today_str}) - {len(today_upsets)}", f"📅 Tomorrow ({tomorrow_str}) - {len(tomorrow_upsets)}"])
+            sub_today, sub_tomorrow = st.tabs([f"📅 Today ({user_today_str}) - {len(today_upsets)}", f"📅 Tomorrow ({user_tomorrow_str}) - {len(tomorrow_upsets)}"])
             
             with sub_today:
                 display_upset_cards(today_upsets)
@@ -717,12 +829,10 @@ def page_upsets(model, profiles):
         if len(all_finished_upsets) == 0:
             st.info(f"No finished upset predictions found (confidence >= {min_conf:.0%})")
         else:
-            # Split by local date
-            all_finished_upsets['_local_date'] = all_finished_upsets['datetime_local'].apply(get_local_date)
-            today_fin_upsets = all_finished_upsets[all_finished_upsets['_local_date'] == today_str]
-            yesterday_fin_upsets = all_finished_upsets[all_finished_upsets['_local_date'] == yesterday_str]
-            no_date_fin = all_finished_upsets[all_finished_upsets['_local_date'].isna()]
-            today_fin_upsets = pd.concat([today_fin_upsets, no_date_fin])
+            # Convert each upset's CET datetime to user's local date for bucketing
+            all_finished_upsets['_user_date'] = all_finished_upsets.apply(get_upset_user_date, axis=1)
+            today_fin_upsets = all_finished_upsets[all_finished_upsets['_user_date'] == user_today_str]
+            yesterday_fin_upsets = all_finished_upsets[all_finished_upsets['_user_date'] == user_yesterday_str]
             
             st.write(f"**{len(all_finished_upsets)}** finished upset predictions total")
             
@@ -732,7 +842,7 @@ def page_upsets(model, profiles):
                 success_rate = correct / len(all_finished_upsets)
                 st.metric("Upset Success Rate", f"{success_rate:.1%}", f"{correct}/{len(all_finished_upsets)} correct")
             
-            sub_today_fin, sub_yesterday_fin = st.tabs([f"📅 Today ({today_str}) - {len(today_fin_upsets)}", f"📅 Yesterday ({yesterday_str}) - {len(yesterday_fin_upsets)}"])
+            sub_today_fin, sub_yesterday_fin = st.tabs([f"📅 Today ({user_today_str}) - {len(today_fin_upsets)}", f"📅 Yesterday ({user_yesterday_str}) - {len(yesterday_fin_upsets)}"])
             
             with sub_today_fin:
                 display_upset_cards(today_fin_upsets)
