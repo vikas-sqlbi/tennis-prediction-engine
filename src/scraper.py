@@ -489,7 +489,7 @@ PLAYER_NAME_MAP = {
 }
 
 
-def scrape_tennis_explorer(include_tomorrow: bool = True, include_yesterday: bool = True, include_two_days_ago: bool = True) -> pd.DataFrame:
+def scrape_tennis_explorer(include_tomorrow: bool = True, include_yesterday: bool = True) -> pd.DataFrame:
     """
     Scrape upcoming matches from TennisExplorer.
     Extracts match times, detects live matches, and fetches scores.
@@ -500,7 +500,6 @@ def scrape_tennis_explorer(include_tomorrow: bool = True, include_yesterday: boo
     Args:
         include_tomorrow: If True, also scrape tomorrow's matches
         include_yesterday: If True, also scrape yesterday's completed matches
-        include_two_days_ago: If True, also scrape 2 days ago (for users in timezones behind CET)
     """
     seen_matches = {}  # Track unique matches: key -> match dict
     
@@ -512,13 +511,16 @@ def scrape_tennis_explorer(include_tomorrow: bool = True, include_yesterday: boo
     ]
     
     def make_key(match):
-        """Create deduplication key using players AND date to avoid merging matches from different days."""
+        """Create deduplication key using player pair only.
+        
+        Players don't play twice in the same tournament round, so player pair
+        is sufficient for deduplication. This prevents the same match from
+        appearing as duplicates when fetched from multiple day pages.
+        """
         p1 = match['player1'].lower().strip()
         p2 = match['player2'].lower().strip()
         # Sort players to handle case where player order might differ
-        players = tuple(sorted([p1, p2]))
-        match_date = match.get('date', '')
-        return (players[0], players[1], match_date)
+        return tuple(sorted([p1, p2]))
     
     # Scrape today first (all categories)
     # IMPORTANT: TennisExplorer uses CET timezone for its date-based URLs
@@ -619,36 +621,16 @@ def scrape_tennis_explorer(include_tomorrow: bool = True, include_yesterday: boo
             
             key = make_key(match)
             if key in seen_matches:
-                # Same match on same date - update with score info
+                # Same match - update with completed info (more authoritative)
                 seen_matches[key]['score'] = match.get('score')
                 seen_matches[key]['winner'] = match.get('winner')
                 seen_matches[key]['status'] = 'completed'
+                seen_matches[key]['date'] = yesterday_cet_str  # Use actual completion date
+                seen_matches[key]['source_day'] = 'Yesterday'
                 if match.get('datetime_local'):
                     seen_matches[key]['datetime_local'] = match['datetime_local']
             else:
                 # New match from yesterday's page
-                match['status'] = 'completed'
-                seen_matches[key] = match
-    
-    # Scrape 2 days ago results if requested - needed for users in timezones behind CET
-    # E.g., US user's "yesterday" might be CET's "2 days ago"
-    if include_two_days_ago:
-        two_days_ago_cet = now_cet - timedelta(days=2)
-        two_days_ago_str = two_days_ago_cet.strftime("%Y-%m-%d")
-        
-        two_days_ago_results = _scrape_results_page(two_days_ago_cet)
-        for match in two_days_ago_results:
-            match_time = match.get('time', '')
-            if match_time and match_time not in ['Finished', 'TBD', '']:
-                datetime_local, _, _ = convert_te_time_to_local(two_days_ago_str, match_time)
-                match['datetime_local'] = datetime_local.isoformat() if datetime_local else None
-            
-            # Mark as from 2 days ago - use CET date
-            match['source_day'] = 'TwoDaysAgo'
-            match['date'] = two_days_ago_str
-            
-            key = make_key(match)
-            if key not in seen_matches:
                 match['status'] = 'completed'
                 seen_matches[key] = match
     
@@ -686,7 +668,7 @@ def scrape_tennis_explorer(include_tomorrow: bool = True, include_yesterday: boo
         # Use source_day for date_label - this is set based on which page we scraped from
         # This is more reliable than timezone-converted dates
         source_day = match.get('source_day')
-        if source_day in ['Yesterday', 'Today', 'Tomorrow', 'TwoDaysAgo']:
+        if source_day in ['Yesterday', 'Today', 'Tomorrow']:
             match['date_label'] = source_day
         else:
             # Fallback: determine from date string (using CET dates)
@@ -695,7 +677,6 @@ def scrape_tennis_explorer(include_tomorrow: bool = True, include_yesterday: boo
             today_cet_str = now_cet.strftime("%Y-%m-%d")
             yesterday_cet_str = (now_cet - timedelta(days=1)).strftime("%Y-%m-%d")
             tomorrow_cet_str = (now_cet + timedelta(days=1)).strftime("%Y-%m-%d")
-            two_days_ago_cet_str = (now_cet - timedelta(days=2)).strftime("%Y-%m-%d")
             match_date = match.get('date', '')
             
             if match_date == today_cet_str:
@@ -704,8 +685,6 @@ def scrape_tennis_explorer(include_tomorrow: bool = True, include_yesterday: boo
                 match['date_label'] = 'Yesterday'
             elif match_date == tomorrow_cet_str:
                 match['date_label'] = 'Tomorrow'
-            elif match_date == two_days_ago_cet_str:
-                match['date_label'] = 'TwoDaysAgo'
             else:
                 continue  # Outside our window
         
@@ -862,16 +841,16 @@ def _scrape_tennis_explorer_date(date: datetime, category_type: str = None) -> L
                                 if is_live:
                                     display_time = "LIVE"
                                     local_date = current_date
+                                    local_time = "LIVE"
                                     datetime_local = None
                                 elif time_text and time_text != '&nbsp;' and time_text != '--:--':
-                                    # Keep time in CET - dashboard will convert to user's timezone
-                                    display_time = time_text
-                                    local_date = current_date
-                                    # Still calculate datetime_local for sorting/filtering
-                                    datetime_local, _, _ = convert_te_time_to_local(current_date, time_text)
+                                    # Convert CET time to local timezone
+                                    datetime_local, local_date, local_time = convert_te_time_to_local(current_date, time_text)
+                                    display_time = local_time
                                 else:
                                     display_time = "TBD"
                                     local_date = current_date
+                                    local_time = "TBD"
                                     datetime_local = None
                                 
                                 # Determine favorite based on odds (lower odds = favorite)
