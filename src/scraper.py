@@ -689,6 +689,23 @@ def scrape_tennis_explorer(include_tomorrow: bool = True, include_yesterday: boo
         
         filtered_matches.append(match)
     
+    # Construct datetime_local from date + time for all matches
+    # Always use match START time (never completion time)
+    for match in filtered_matches:
+        match_date = match.get('date', '')
+        match_time = match.get('time', '')
+        
+        # Only construct if we have valid date and time (HH:MM format)
+        if match_date and match_time and re.match(r'^\d{1,2}:\d{2}$', match_time):
+            try:
+                # Combine date and time into ISO format datetime string
+                dt_str = f"{match_date}T{match_time}:00"
+                match['datetime_local'] = dt_str
+            except Exception:
+                match['datetime_local'] = None
+        else:
+            match['datetime_local'] = None
+    
     logger.info(f"Scraped {len(all_matches)} matches, kept {len(filtered_matches)} in 3-day window")
     return pd.DataFrame(filtered_matches)
 
@@ -994,8 +1011,6 @@ def _scrape_results_page(date: datetime) -> List[Dict]:
                                 matches.append({
                                     'date': date_str,
                                     'time': clean_time_field(time_cell.get_text(strip=True)) or "Finished",
-                                    'datetime_local': None,
-                                    'datetime_cet': None,
                                     'tournament': current_tournament,
                                     'surface': current_surface,
                                     'player1': player1,
