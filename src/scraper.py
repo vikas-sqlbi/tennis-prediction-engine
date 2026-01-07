@@ -20,8 +20,45 @@ except ImportError:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# TennisExplorer uses CET/CEST timezone
-TE_TIMEZONE = ZoneInfo("Europe/Paris")
+# Target timezone for scraping (US Central Time - handles DST automatically)
+USER_TIMEZONE = ZoneInfo("America/Chicago")
+
+
+def get_current_timezone_offset() -> int:
+    """
+    Get the current timezone offset for US Central Time.
+    Handles Daylight Saving Time automatically.
+    
+    Returns:
+        Offset in hours (e.g., -6 for CST, -5 for CDT)
+    """
+    now = datetime.now(USER_TIMEZONE)
+    offset_seconds = now.utcoffset().total_seconds()
+    return int(offset_seconds / 3600)
+
+
+def create_te_session() -> requests.Session:
+    """
+    Create a requests session with the timezone cookie set for US Central Time.
+    This makes TennisExplorer return times already converted to CST/CDT.
+    """
+    session = requests.Session()
+    offset = get_current_timezone_offset()
+    session.cookies.set('my_timezone', str(offset), domain='.tennisexplorer.com')
+    logger.info(f"Created TE session with timezone offset: {offset} ({'CDT' if offset == -5 else 'CST'})")
+    return session
+
+
+# Global session for all requests (initialized lazily)
+_te_session: Optional[requests.Session] = None
+
+
+def get_te_session() -> requests.Session:
+    """Get or create the TennisExplorer session with timezone cookie."""
+    global _te_session
+    if _te_session is None:
+        _te_session = create_te_session()
+    return _te_session
 
 
 class PlayerMatcher:
@@ -196,42 +233,18 @@ class PlayerMatcher:
 _player_matcher = PlayerMatcher()
 
 
-def convert_te_time_to_local(date_str: str, time_str: str) -> tuple[datetime, str, str]:
-    """
-    Convert TennisExplorer time (CET) to local timezone.
-    
-    Args:
-        date_str: Date in YYYY-MM-DD format
-        time_str: Time in HH:MM format (CET timezone)
-    
-    Returns:
-        Tuple of (local_datetime, local_date_str, local_time_str)
-    """
-    try:
-        # Parse as CET time
-        dt_cet = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
-        dt_cet = dt_cet.replace(tzinfo=TE_TIMEZONE)
-        
-        # Convert to local timezone
-        dt_local = dt_cet.astimezone()
-        
-        local_date_str = dt_local.strftime("%Y-%m-%d")
-        local_time_str = dt_local.strftime("%H:%M")
-        
-        return dt_local, local_date_str, local_time_str
-    except (ValueError, AttributeError):
-        return None, date_str, time_str
-
-
 def is_match_in_past(date_str: str, time_str: str) -> bool:
-    """Check if a match time has already passed (in local timezone)."""
+    """
+    Check if a match time has already passed.
+    Times are already in US Central Time (CST/CDT) from the scraper.
+    """
     try:
-        dt_cet = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
-        dt_cet = dt_cet.replace(tzinfo=TE_TIMEZONE)
-        dt_local = dt_cet.astimezone()
+        dt = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
+        dt = dt.replace(tzinfo=USER_TIMEZONE)
         
         # Add 3 hour buffer for match duration
-        return dt_local < datetime.now().astimezone() - timedelta(hours=3)
+        now = datetime.now(USER_TIMEZONE)
+        return dt < now - timedelta(hours=3)
     except (ValueError, AttributeError):
         return False
 
@@ -519,24 +532,21 @@ def scrape_tennis_explorer(include_tomorrow: bool = True, include_yesterday: boo
         return (players[0], players[1])
     
     # Scrape today first (all categories)
-    # IMPORTANT: TennisExplorer uses CET timezone for its date-based URLs
-    # We must use CET dates for URLs, not local dates
-    now_cet = datetime.now(TE_TIMEZONE)
-    today = now_cet
-    today_str = now_cet.strftime("%Y-%m-%d")  # CET date string for TennisExplorer URLs
-    today_local_str = datetime.now().astimezone().strftime("%Y-%m-%d")
-    yesterday_local_str = (datetime.now().astimezone() - timedelta(days=1)).strftime("%Y-%m-%d")
-    tomorrow_local_str = (datetime.now().astimezone() + timedelta(days=1)).strftime("%Y-%m-%d")
+    # Times are returned in US Central Time (CST/CDT) via the my_timezone cookie
+    now_cst = datetime.now(USER_TIMEZONE)
+    today = now_cst
+    today_str = now_cst.strftime("%Y-%m-%d")
+    yesterday_str = (now_cst - timedelta(days=1)).strftime("%Y-%m-%d")
+    tomorrow_str = (now_cst + timedelta(days=1)).strftime("%Y-%m-%d")
     
-    logger.info(f"Scraping with CET date: {today_str}, Local date: {today_local_str}")
+    logger.info(f"Scraping with CST date: {today_str}")
     
     for cat_type in category_types:
         today_matches = _scrape_tennis_explorer_date(today, category_type=cat_type)
         for match in today_matches:
-            # All matches from CET "today" page are considered "Today" for our purposes
-            # The user wants to see what's happening now/soon, not strict local date matching
+            # All matches from today's page - date is already in CST
             match['source_day'] = 'Today'
-            match['date'] = today_local_str
+            match['date'] = today_str
             
             key = make_key(match)
             if key not in seen_matches:
@@ -549,21 +559,12 @@ def scrape_tennis_explorer(include_tomorrow: bool = True, include_yesterday: boo
                 seen_matches[key]['tournament'] = match['tournament']
     
     # Fetch today's results/scores from results page
-    # Use local timezone for date comparison
-    today_local_str = datetime.now().astimezone().strftime("%Y-%m-%d")
+    # Times are already in CST from the cookie
     today_results = _scrape_results_page(today)
     for match in today_results:
-        # Convert the CET datetime to local datetime for sorting
-        match_cet_date = match.get('date', '')
-        match_time = match.get('time', '')
-        
-        if match_time and match_time not in ['Finished', 'TBD', '']:
-            datetime_local, _, local_time = convert_te_time_to_local(match_cet_date, match_time)
-            match['datetime_local'] = datetime_local.isoformat() if datetime_local else None
-        
-        # Mark as from today's results - use source page, not timezone-converted date
+        # Mark as from today's results - date is already in CST
         match['source_day'] = 'Today'
-        match['date'] = today_local_str  # Keep local date for display
+        match['date'] = today_str
         
         key = make_key(match)
         # Always prefer completed results - they have scores
@@ -572,48 +573,35 @@ def scrape_tennis_explorer(include_tomorrow: bool = True, include_yesterday: boo
             seen_matches[key]['score'] = match.get('score')
             seen_matches[key]['winner'] = match.get('winner')
             seen_matches[key]['status'] = match.get('status', 'completed')
-            seen_matches[key]['source_day'] = 'Today'  # Completed today
-            if match.get('datetime_local'):
-                seen_matches[key]['datetime_local'] = match['datetime_local']
+            seen_matches[key]['source_day'] = 'Today'
         else:
             # Add completed match we didn't have
             seen_matches[key] = match
     
     # Scrape tomorrow if requested
     if include_tomorrow:
-        tomorrow_cet = now_cet + timedelta(days=1)
-        tomorrow_str = tomorrow_cet.strftime("%Y-%m-%d")  # CET date string for URL
+        tomorrow_cst = now_cst + timedelta(days=1)
         
         for cat_type in category_types:
-            tomorrow_matches = _scrape_tennis_explorer_date(tomorrow_cet, category_type=cat_type)
+            tomorrow_matches = _scrape_tennis_explorer_date(tomorrow_cst, category_type=cat_type)
             for match in tomorrow_matches:
-                # Matches from tomorrow's page are TOMORROW matches
-                # Use source page as the label, not timezone-converted date
                 match['source_day'] = 'Tomorrow'
-                match['date'] = tomorrow_local_str
+                match['date'] = tomorrow_str
                 
                 key = make_key(match)
                 # Only add if we don't already have this match from today's page
                 if key not in seen_matches:
                     seen_matches[key] = match
     
-    # Scrape yesterday's results if requested - MOST AUTHORITATIVE for completed matches
+    # Scrape yesterday's results if requested
     if include_yesterday:
-        yesterday_cet = now_cet - timedelta(days=1)
-        yesterday_str = yesterday_cet.strftime("%Y-%m-%d")  # CET date string for URL
-        # Note: yesterday_local_str is already defined at the top
+        yesterday_cst = now_cst - timedelta(days=1)
         
-        yesterday_results = _scrape_results_page(yesterday_cet)
+        yesterday_results = _scrape_results_page(yesterday_cst)
         for match in yesterday_results:
-            # Convert CET datetime to local for sorting
-            match_time = match.get('time', '')
-            if match_time and match_time not in ['Finished', 'TBD', '']:
-                datetime_local, _, _ = convert_te_time_to_local(yesterday_str, match_time)
-                match['datetime_local'] = datetime_local.isoformat() if datetime_local else None
-            
-            # Mark as from yesterday's results
+            # Mark as from yesterday's results - date is already in CST
             match['source_day'] = 'Yesterday'
-            match['date'] = yesterday_local_str
+            match['date'] = yesterday_str
             
             key = make_key(match)
             if key in seen_matches:
@@ -621,12 +609,9 @@ def scrape_tennis_explorer(include_tomorrow: bool = True, include_yesterday: boo
                 seen_matches[key]['score'] = match.get('score')
                 seen_matches[key]['winner'] = match.get('winner')
                 seen_matches[key]['status'] = 'completed'
-                if match.get('datetime_local'):
-                    seen_matches[key]['datetime_local'] = match['datetime_local']
-                # Keep original source_day (Today) - don't change to Yesterday
             else:
                 # New match only from yesterday's page
-                match['status'] = 'completed'  # Ensure status is set
+                match['status'] = 'completed'
                 seen_matches[key] = match
     
     all_matches = list(seen_matches.values())
@@ -643,50 +628,36 @@ def scrape_tennis_explorer(include_tomorrow: bool = True, include_yesterday: boo
     logger.info(f"Filtered {len(all_matches) - len(atp_matches)} WTA matches, kept {len(atp_matches)} ATP matches")
     all_matches = atp_matches
     
-    now_local = datetime.now().astimezone()
+    # Now is in CST - same timezone as our scraped data
+    now_cst = datetime.now(USER_TIMEZONE)
     
     filtered_matches = []
     for match in all_matches:
-        datetime_local_str = match.get('datetime_local')
-        
-        # Try to parse datetime for time-based filtering
-        match_dt = None
-        if datetime_local_str:
-            try:
-                match_dt = datetime.fromisoformat(datetime_local_str)
-            except (ValueError, TypeError):
-                pass
-        
         is_completed = match.get('status') == 'completed'
         is_live = match.get('is_live', False)
         
         # Use source_day for date_label - this is set based on which page we scraped from
-        # This is more reliable than timezone-converted dates
         source_day = match.get('source_day')
         if source_day in ['Yesterday', 'Today', 'Tomorrow']:
             match['date_label'] = source_day
         else:
-            # Fallback: determine from date string
-            today_local_str = now_local.strftime("%Y-%m-%d")
-            yesterday_local_str = (now_local - timedelta(days=1)).strftime("%Y-%m-%d")
-            tomorrow_local_str = (now_local + timedelta(days=1)).strftime("%Y-%m-%d")
+            # Fallback: determine from date string (already in CST)
             match_date = match.get('date', '')
-            
-            if match_date == today_local_str:
+            if match_date == today_str:
                 match['date_label'] = 'Today'
-            elif match_date == yesterday_local_str:
+            elif match_date == yesterday_str:
                 match['date_label'] = 'Yesterday'
-            elif match_date == tomorrow_local_str:
+            elif match_date == tomorrow_str:
                 match['date_label'] = 'Tomorrow'
             else:
                 continue  # Outside our window
         
         # For scheduled (not completed, not live) TODAY matches, check if time has passed
-        # But keep yesterday's matches even if not marked completed (results page may be delayed)
-        if not is_completed and not is_live and match_dt and match.get('date_label') == 'Today':
-            # Skip if match started more than 3 hours ago (likely finished but not updated)
-            if match_dt < now_local - timedelta(hours=3):
-                continue
+        if not is_completed and not is_live and match.get('date_label') == 'Today':
+            match_time = match.get('time', '')
+            if match_time and match_time not in ['TBD', 'LIVE', '']:
+                if is_match_in_past(match.get('date', ''), match_time):
+                    continue  # Skip past matches that aren't marked completed
         
         filtered_matches.append(match)
     
@@ -704,7 +675,7 @@ def _scrape_tennis_explorer_date(date: datetime, category_type: str = None) -> L
     """
     # TennisExplorer uses /?date=YYYY-MM-DD format
     date_str = date.strftime("%Y-%m-%d")
-    is_today = date.date() == datetime.now().date()
+    is_today = date.date() == datetime.now(USER_TIMEZONE).date()
     
     # Build URL with optional category type
     if is_today:
@@ -719,7 +690,8 @@ def _scrape_tennis_explorer_date(date: datetime, category_type: str = None) -> L
             url += f"?type={category_type}"
     
     try:
-        response = requests.get(url, headers=HEADERS, timeout=15)
+        session = get_te_session()
+        response = session.get(url, headers=HEADERS, timeout=15)
         response.raise_for_status()
     except Exception as e:
         logger.error(f"Failed to fetch TennisExplorer for {date_str}: {e}")
@@ -830,35 +802,20 @@ def _scrape_tennis_explorer_date(date: datetime, category_type: str = None) -> L
                             
                             # Skip if either name is empty or too short
                             if len(player1) > 2 and len(player2) > 2:
-                                # Format time display
+                                # Times are already in CST from the cookie - use directly
                                 if is_live:
                                     display_time = "LIVE"
-                                    local_date = current_date
-                                    local_time = "LIVE"
-                                    datetime_local = None
                                 elif time_text and time_text != '&nbsp;' and time_text != '--:--':
-                                    # Convert CET time to local timezone
-                                    datetime_local, local_date, local_time = convert_te_time_to_local(current_date, time_text)
-                                    display_time = local_time
+                                    display_time = time_text
                                 else:
                                     display_time = "TBD"
-                                    local_date = current_date
-                                    local_time = "TBD"
-                                    datetime_local = None
                                 
                                 # Determine favorite based on odds (lower odds = favorite)
                                 favorite = determine_favorite_from_odds(player1, player2, odds1, odds2)
                                 
-                                # Create ISO datetime string in local timezone
-                                datetime_local_str = None
-                                if datetime_local:
-                                    datetime_local_str = datetime_local.strftime("%Y-%m-%dT%H:%M:%S%z")
-                                
                                 matches.append({
-                                    'date': local_date,  # Use local date instead of CET date
+                                    'date': current_date,  # Already in CST
                                     'time': display_time,
-                                    'datetime_local': datetime_local_str,
-                                    'datetime_cet': f"{current_date}T{time_text}:00" if time_text and time_text not in ['--:--', '&nbsp;'] else None,
                                     'tournament': current_tournament,
                                     'surface': current_surface,
                                     'player1': player1,
@@ -887,7 +844,7 @@ def _scrape_results_page(date: datetime) -> List[Dict]:
         date: The date to get results for
     """
     date_str = date.strftime("%Y-%m-%d")
-    is_today = date.date() == datetime.now().date()
+    is_today = date.date() == datetime.now(USER_TIMEZONE).date()
     
     if is_today:
         url = "https://www.tennisexplorer.com/results/"
@@ -895,7 +852,8 @@ def _scrape_results_page(date: datetime) -> List[Dict]:
         url = f"https://www.tennisexplorer.com/results/?date={date_str}"
     
     try:
-        response = requests.get(url, headers=HEADERS, timeout=15)
+        session = get_te_session()
+        response = session.get(url, headers=HEADERS, timeout=15)
         response.raise_for_status()
     except Exception as e:
         logger.error(f"Failed to fetch results page for {date_str}: {e}")
