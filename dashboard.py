@@ -198,7 +198,7 @@ def page_calendar(model, profiles):
     
     # Filters section - visible before tabs
     st.subheader("🔍 Filters")
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
         surfaces = st.multiselect("Surface", ["Hard", "Clay", "Grass"], default=["Hard", "Clay", "Grass"])
     with col2:
@@ -208,9 +208,20 @@ def page_calendar(model, profiles):
         show_main_only = st.checkbox("🏆 Main events only", value=True, 
             help="Filter out UTR/Futures/ITF events (recommended for better predictions)")
     with col4:
+        show_predicted_only = st.checkbox("🎯 Predicted only", value=True,
+            help="Only show matches where we have player predictions")
+    with col5:
         show_upsets_only = st.checkbox("⚠️ Upset alerts only", value=False)
     
     st.markdown("---")
+    
+    # Helper function to check if a match has a prediction
+    def has_prediction(match):
+        pred = model.predict_match(
+            match['player1'], match['player2'], match['surface'],
+            match.get('favorite'), tournament_name=match.get('tournament', '')
+        )
+        return pred is not None
     
     # Helper function to apply filters to a dataset
     def apply_filters(df):
@@ -228,6 +239,10 @@ def page_calendar(model, profiles):
                 exclude_keywords = ['utr', 'itf', 'futures', 'challenger']
                 mask = ~result['tournament'].str.lower().str.contains('|'.join(exclude_keywords), na=False)
                 result = result[mask]
+        if show_predicted_only:
+            # Filter to only matches with predictions
+            mask = result.apply(has_prediction, axis=1)
+            result = result[mask]
         return result
     
     # Helper function to display a single match card
@@ -390,13 +405,9 @@ def page_calendar(model, profiles):
     with tab_upcoming:
         filtered_upcoming = apply_filters(upcoming_matches)
         
-        # Split by actual local date from datetime_local
-        filtered_upcoming['_local_date'] = filtered_upcoming['datetime_local'].apply(get_local_date)
-        today_upcoming = filtered_upcoming[filtered_upcoming['_local_date'] == today_str]
-        tomorrow_upcoming = filtered_upcoming[filtered_upcoming['_local_date'] == tomorrow_str]
-        # Include matches without datetime_local in "Today"
-        no_date = filtered_upcoming[filtered_upcoming['_local_date'].isna()]
-        today_upcoming = pd.concat([today_upcoming, no_date])
+        # Split by date_label (already set by scraper) - use .copy() for separate dataframes
+        today_upcoming = filtered_upcoming[filtered_upcoming['date_label'] == 'Today'].copy()
+        tomorrow_upcoming = filtered_upcoming[filtered_upcoming['date_label'] == 'Tomorrow'].copy()
         
         # Count upsets if filter is on
         if show_upsets_only:
