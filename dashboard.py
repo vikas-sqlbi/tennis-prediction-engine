@@ -390,13 +390,9 @@ def page_calendar(model, profiles):
     with tab_upcoming:
         filtered_upcoming = apply_filters(upcoming_matches)
         
-        # Split by actual local date from datetime_local
-        filtered_upcoming['_local_date'] = filtered_upcoming['datetime_local'].apply(get_local_date)
-        today_upcoming = filtered_upcoming[filtered_upcoming['_local_date'] == today_str]
-        tomorrow_upcoming = filtered_upcoming[filtered_upcoming['_local_date'] == tomorrow_str]
-        # Include matches without datetime_local in "Today"
-        no_date = filtered_upcoming[filtered_upcoming['_local_date'].isna()]
-        today_upcoming = pd.concat([today_upcoming, no_date])
+        # Split by date_label (already set by scraper) - use .copy() for separate dataframes
+        today_upcoming = filtered_upcoming[filtered_upcoming['date_label'] == 'Today'].copy()
+        tomorrow_upcoming = filtered_upcoming[filtered_upcoming['date_label'] == 'Tomorrow'].copy()
         
         # Count upsets if filter is on
         if show_upsets_only:
