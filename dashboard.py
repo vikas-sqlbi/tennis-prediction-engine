@@ -182,13 +182,19 @@ def page_calendar(model, profiles):
     upcoming_matches = upcoming[
         (upcoming['_status'] == 'upcoming') & 
         (upcoming['date_label'].isin(['Today', 'Tomorrow']))
-    ]
+    ].copy()
+    # Sort upcoming matches ascending (earliest first)
+    if len(upcoming_matches) > 0:
+        upcoming_matches = upcoming_matches.sort_values(by=['date', 'time'], ascending=True)
     
     # Finished: Today + Yesterday completed matches
     finished_matches = upcoming[
         (upcoming['_status'] == 'finished') & 
         (upcoming['date_label'].isin(['Today', 'Yesterday']))
-    ]
+    ].copy()
+    # Sort finished matches descending (most recent first)
+    if len(finished_matches) > 0:
+        finished_matches = finished_matches.sort_values(by=['date', 'time'], ascending=False)
     
     # Filters section - visible before tabs
     st.subheader("🔍 Filters")
