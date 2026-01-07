@@ -398,9 +398,29 @@ def page_calendar(model, profiles):
         no_date = filtered_upcoming[filtered_upcoming['_local_date'].isna()]
         today_upcoming = pd.concat([today_upcoming, no_date])
         
-        st.write(f"**{len(filtered_upcoming)}** upcoming matches total")
+        # Count upsets if filter is on
+        if show_upsets_only:
+            def count_upsets(matches_df):
+                count = 0
+                for _, match in matches_df.iterrows():
+                    pred = model.predict_match(
+                        match['player1'], match['player2'], match['surface'],
+                        match.get('favorite'), tournament_name=match.get('tournament', '')
+                    )
+                    if pred is not None and pred.predicted_winner == pred.underdog:
+                        count += 1
+                return count
+            
+            today_count = count_upsets(today_upcoming)
+            tomorrow_count = count_upsets(tomorrow_upcoming)
+            total_count = today_count + tomorrow_count
+            st.write(f"**{total_count}** upset predictions")
+        else:
+            today_count = len(today_upcoming)
+            tomorrow_count = len(tomorrow_upcoming)
+            st.write(f"**{len(filtered_upcoming)}** upcoming matches total")
         
-        sub_today, sub_tomorrow = st.tabs([f"📅 Today ({today_str}) - {len(today_upcoming)}", f"📅 Tomorrow ({tomorrow_str}) - {len(tomorrow_upcoming)}"])
+        sub_today, sub_tomorrow = st.tabs([f"📅 Today ({today_str}) - {today_count}", f"📅 Tomorrow ({tomorrow_str}) - {tomorrow_count}"])
         
         with sub_today:
             display_day_matches(today_upcoming, model, show_upsets_only, sort_ascending=True)
