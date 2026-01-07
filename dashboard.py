@@ -43,6 +43,24 @@ def clean_time_display(time_str: str) -> str:
     return str(time_str)[:5] if len(str(time_str)) > 5 else str(time_str)
 
 
+# Common timezones for user selection
+TIMEZONE_OPTIONS = {
+    "US/Eastern": "🇺🇸 US Eastern (ET)",
+    "US/Central": "🇺🇸 US Central (CT)",
+    "US/Mountain": "🇺🇸 US Mountain (MT)",
+    "US/Pacific": "🇺🇸 US Pacific (PT)",
+    "Europe/London": "🇬🇧 UK (GMT/BST)",
+    "Europe/Paris": "🇪🇺 Central Europe (CET)",
+    "Europe/Berlin": "🇩🇪 Germany (CET)",
+    "Asia/Tokyo": "🇯🇵 Japan (JST)",
+    "Asia/Shanghai": "🇨🇳 China (CST)",
+    "Asia/Kolkata": "🇮🇳 India (IST)",
+    "Australia/Sydney": "🇦🇺 Australia (AEST)",
+    "Australia/Melbourne": "🇦🇺 Melbourne (AEST)",
+    "Pacific/Auckland": "🇳🇿 New Zealand (NZST)",
+}
+
+
 def get_user_now() -> datetime:
     """Get current datetime in user's selected timezone.
     
@@ -52,6 +70,14 @@ def get_user_now() -> datetime:
     tz_name = st.session_state.get('user_timezone', 'US/Central')
     user_tz = ZoneInfo(tz_name)
     return datetime.now(user_tz)
+
+
+def get_user_timezone_name() -> str:
+    """Get the display name of user's selected timezone."""
+    tz_name = st.session_state.get('user_timezone', 'US/Central')
+    user_tz = ZoneInfo(tz_name)
+    now = datetime.now(user_tz)
+    return now.strftime("%Z")
 
 
 def get_cet_now() -> datetime:
@@ -162,25 +188,25 @@ def page_calendar(model, profiles):
     with col_info:
         st.info(f"📡 Scraped **{len(upcoming)} matches** from TennisExplorer (auto-refreshes every 30 min)")
     
-    # FIX: Match dates are stored in CET timezone (TennisExplorer's timezone)
-    # We compare with CET dates for consistency, not user timezone
-    # The scraper sets date_label based on source_day which is already correct
-    # This is only a fallback if date_label is missing
-    if 'date_label' not in upcoming.columns:
-        cet_now = get_cet_now()
-        today_str = cet_now.strftime("%Y-%m-%d")
-        yesterday_str = (cet_now - timedelta(days=1)).strftime("%Y-%m-%d")
-        tomorrow_str = (cet_now + timedelta(days=1)).strftime("%Y-%m-%d")
-        
-        def assign_label(d):
-            if d == today_str:
-                return 'Today'
-            elif d == yesterday_str:
-                return 'Yesterday'
-            elif d == tomorrow_str:
-                return 'Tomorrow'
-            return 'Other'
-        upcoming['date_label'] = upcoming['date'].apply(assign_label)
+    # FIX: Use user's timezone for Today/Tomorrow labels
+    # Match dates from scraper are in CET, but we want labels based on user's local date
+    # This ensures a US user sees "Today" for matches on their current date
+    user_now = get_user_now()
+    today_str = user_now.strftime("%Y-%m-%d")
+    yesterday_str = (user_now - timedelta(days=1)).strftime("%Y-%m-%d")
+    tomorrow_str = (user_now + timedelta(days=1)).strftime("%Y-%m-%d")
+    
+    def assign_label(d):
+        if d == today_str:
+            return 'Today'
+        elif d == yesterday_str:
+            return 'Yesterday'
+        elif d == tomorrow_str:
+            return 'Tomorrow'
+        return 'Other'
+    
+    # Always recalculate date_label based on user's timezone
+    upcoming['date_label'] = upcoming['date'].apply(assign_label)
     
     # Determine match status for all matches
     def get_match_status(row):
@@ -990,9 +1016,28 @@ def main():
     # Data summary in sidebar
     st.sidebar.title("🎾 Navigation")
     
-    # FIX: Removed timezone selector - dates are now consistently in CET (TennisExplorer timezone)
-    # This ensures all users see the same "Today/Tomorrow" based on tournament time
-    st.sidebar.caption("📍 Times shown in CET (tournament time)")
+    # Initialize timezone in session state if not set
+    if 'user_timezone' not in st.session_state:
+        st.session_state['user_timezone'] = 'US/Central'
+    
+    # Timezone selector
+    st.sidebar.markdown("### 🕐 Your Timezone")
+    current_tz = st.session_state.get('user_timezone', 'US/Central')
+    tz_keys = list(TIMEZONE_OPTIONS.keys())
+    current_index = tz_keys.index(current_tz) if current_tz in tz_keys else 1
+    
+    selected_tz = st.sidebar.selectbox(
+        "Select timezone",
+        options=tz_keys,
+        format_func=lambda x: TIMEZONE_OPTIONS[x],
+        index=current_index,
+        label_visibility="collapsed"
+    )
+    st.session_state['user_timezone'] = selected_tz
+    
+    # Show current time in user's timezone
+    user_now = get_user_now()
+    st.sidebar.caption(f"📍 {user_now.strftime('%a, %b %d • %I:%M %p')} ({get_user_timezone_name()})")
     
     st.sidebar.markdown("---")
     
