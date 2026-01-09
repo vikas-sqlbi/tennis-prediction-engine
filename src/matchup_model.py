@@ -545,6 +545,19 @@ class MatchupModel:
         # === RANKING TRAJECTORY ===
         features['trajectory_diff'] = p1.get('ranking_trajectory', 0) - p2.get('ranking_trajectory', 0)
         
+        # === UPSET-SPECIFIC FEATURES ===
+        # Surface upset rate
+        surface_upset_rates = {'Hard': 0.42, 'Clay': 0.38, 'Grass': 0.45, 'Carpet': 0.40}
+        features['surface_upset_rate'] = surface_upset_rates.get(surface, 0.42)
+        
+        # ELO momentum difference
+        features['elo_momentum_diff'] = p1.get('elo_30d_change', 0) - p2.get('elo_30d_change', 0)
+        
+        # Upset momentum: trajectory difference weighted by recent performance
+        p1_recent_form = p1.get('recent_form', 0.5)
+        p2_recent_form = p2.get('recent_form', 0.5)
+        features['upset_momentum'] = features['trajectory_diff'] * (1 + (p1_recent_form - p2_recent_form))
+        
         return features
     
     def train(self, matches_df: pd.DataFrame, model_type: str = 'random_forest') -> Dict:
