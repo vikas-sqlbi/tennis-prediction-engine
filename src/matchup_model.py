@@ -78,11 +78,13 @@ class MatchupModel:
         self.profiles = player_profiles
         self.profiler = profiler  # Used for H2H lookups
         self.model = None
+        self.upset_model = None  # Dedicated upset prediction model
         self.scaler = StandardScaler()
         self.surface_encoder = LabelEncoder()
         self.level_encoder = LabelEncoder()
         self.feature_cols = []
         self.is_trained = False
+        self.upset_model_trained = False  # Whether upset model is trained
         self._player_cache = {}  # Cache player lookups to avoid repeated warnings
         self._missing_players = set()  # Track players we've already warned about
     
@@ -392,6 +394,17 @@ class MatchupModel:
         # === RANKING TRAJECTORY ===
         features['trajectory_diff'] = get_diff('ranking_trajectory', 0)
         
+        # === UPSET-SPECIFIC FEATURES ===
+        # Surface upset rate (historical upset frequency on this surface)
+        surface_upset_rates = {'Hard': 0.42, 'Clay': 0.38, 'Grass': 0.45, 'Carpet': 0.40}
+        features['surface_upset_rate'] = df['surface'].map(surface_upset_rates).fillna(0.42).values
+        
+        # Recent ranking change (how much ELO has changed in last 30 days)
+        features['elo_momentum_diff'] = get_diff('elo_30d_change', 0)
+        
+        # Upset momentum: trajectory difference weighted by recent performance
+        features['upset_momentum'] = features['trajectory_diff'] * (1 + features['recent_form_diff'])
+        
         logger.info(f"Created {len(features)} matchup samples with {len(features.columns)} features")
         return features.reset_index(drop=True)
     
@@ -584,6 +597,8 @@ class MatchupModel:
             'second_serve_won_diff', 'serve_points_won_diff', 'df_pct_diff',
             # Ranking trajectory
             'trajectory_diff',
+            # Upset-specific features
+            'surface_upset_rate', 'elo_momentum_diff', 'upset_momentum',
         ]
         
         X = feature_df[self.feature_cols].fillna(0)
@@ -655,6 +670,109 @@ class MatchupModel:
                 logger.info(f"{row['feature']:30s} {row['importance']:.4f} {bar}")
             logger.info(f"{'='*50}")
             logger.info(f"Total features: {len(self.feature_cols)}")
+        
+        return results
+    
+    def train_upset_model(self, matches_df: pd.DataFrame, upset_threshold: float = 0.40) -> Dict:
+        """
+        Train a dedicated upset prediction model.
+        
+        Args:
+            matches_df: Historical matches dataframe
+            upset_threshold: Probability threshold to define upsets
+        
+        Returns:
+            Dictionary with training metrics
+        """
+        logger.info("Training dedicated upset prediction model...")
+        
+        # Create features
+        feature_df = self.create_matchup_features(matches_df)
+        
+        if len(feature_df) < 100:
+            raise ValueError(f"Not enough training data: {len(feature_df)} samples")
+        
+        # Encode categorical features
+        feature_df['surface_encoded'] = self.surface_encoder.fit_transform(
+            feature_df['surface'].fillna('Hard')
+        )
+        feature_df['tourney_level_encoded'] = self.level_encoder.fit_transform(
+            feature_df['tourney_level'].fillna('A').astype(str)
+        )
+        
+        X = feature_df[self.feature_cols].fillna(0)
+        y = feature_df['target']
+        
+        # Create upset labels: 1 if underdog wins, 0 otherwise
+        # For upset model, target is whether the predicted underdog wins
+        upset_targets = []
+        for _, row in feature_df.iterrows():
+            # If p1 has lower ranking (higher rank number), they're the underdog
+            # This is a simplification - in practice we'd use market odds
+            p1_rank = row.get('p1_rank', 100)
+            p2_rank = row.get('p2_rank', 100)
+            
+            # If p1 has higher rank number (worse rank), they're underdog
+            is_upset = (p1_rank > p2_rank) and (row['target'] == 1)  # p1 won and was underdog
+            upset_targets.append(1 if is_upset else 0)
+        
+        y_upset = np.array(upset_targets)
+        
+        # Check if we have enough positive samples
+        n_positive = sum(y_upset)
+        if n_positive < 10:
+            logger.warning(f"Very few upset cases ({n_positive}) - upset model may not be reliable")
+            self.upset_model_trained = False
+            return {'error': 'insufficient_upset_cases'}
+        
+        # Train/test split (stratify if possible)
+        try:
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y_upset, test_size=0.2, random_state=42, stratify=y_upset
+            )
+        except ValueError:
+            # If stratification fails, do regular split
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y_upset, test_size=0.2, random_state=42
+            )
+        
+        # Scale features
+        X_train_scaled = self.scaler.fit_transform(X_train)
+        X_test_scaled = self.scaler.transform(X_test)
+        
+        # Train upset model (use simpler model for better generalization)
+        self.upset_model = RandomForestClassifier(
+            n_estimators=100, max_depth=6,  # Simpler than main model
+            min_samples_split=10, random_state=42
+        )
+        
+        self.upset_model.fit(X_train_scaled, y_train)
+        y_pred = self.upset_model.predict(X_test_scaled)
+        
+        # Handle predict_proba for binary classification
+        proba = self.upset_model.predict_proba(X_test_scaled)
+        if proba.shape[1] > 1:
+            y_prob = proba[:, 1]
+        else:
+            # Only one class predicted
+            y_prob = np.zeros(len(y_test))
+        
+        # Evaluate
+        accuracy = accuracy_score(y_test, y_pred)
+        cv_scores = cross_val_score(self.upset_model, X, y_upset, cv=5)
+        
+        self.upset_model_trained = True
+        
+        results = {
+            'upset_accuracy': accuracy,
+            'upset_cv_mean': cv_scores.mean(),
+            'upset_cv_std': cv_scores.std(),
+            'upset_train_samples': len(X_train),
+            'upset_test_samples': len(X_test),
+            'upset_threshold': upset_threshold
+        }
+        
+        logger.info(f"Upset model trained. Accuracy: {accuracy:.4f}, CV: {cv_scores.mean():.4f} +/- {cv_scores.std():.4f}")
         
         return results
     
@@ -1060,7 +1178,7 @@ class MatchupModel:
     def find_upset_opportunities(
         self, 
         upcoming_matches: pd.DataFrame,
-        min_upset_prob: float = 0.35
+        min_upset_prob: float = 0.40
     ) -> pd.DataFrame:
         """
         Find matches with high upset potential.
