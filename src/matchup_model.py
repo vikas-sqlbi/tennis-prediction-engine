@@ -604,7 +604,7 @@ class MatchupModel:
             'h2h_advantage', 'h2h_matches',
             # ELO features (6 features)
             'elo_diff', 'elo_ratio', 'surface_elo_diff', 
-            'elo_momentum_diff', 'elo_peak_diff', 'elo_predicted_p1',
+            'elo_peak_diff', 'elo_predicted_p1',
             # Serve features
             'first_serve_pct_diff', 'first_serve_won_diff', 
             'second_serve_won_diff', 'serve_points_won_diff', 'df_pct_diff',
