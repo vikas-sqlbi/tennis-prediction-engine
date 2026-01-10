@@ -18,6 +18,9 @@ import sys
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
+# Cache bust token to invalidate old cached resources after model schema changes
+CACHE_BUST = "2026-01-10-surface-upset"
+
 # Page config - MUST be first Streamlit command
 st.set_page_config(
     page_title="Tennis Upset Predictor",
@@ -73,7 +76,7 @@ def load_all_data():
 
 
 @st.cache_resource(show_spinner=False)
-def build_profiler_and_profiles(_matches):
+def build_profiler_and_profiles(_matches, _cache_bust: str = CACHE_BUST):
     """Build and cache player profiler and profiles."""
     profiler = PlayerProfiler(_matches)
     profiles = profiler.build_all_profiles(min_matches=10)  # Lower threshold to include more players
@@ -86,7 +89,7 @@ def build_profiler_and_profiles(_matches):
 
 
 @st.cache_resource(show_spinner=False)
-def get_trained_model(_matches, _profiles, _profiler):
+def get_trained_model(_matches, _profiles, _profiler, _cache_bust: str = CACHE_BUST):
     """Train and cache the prediction model with H2H support."""
     model = MatchupModel(_profiles, profiler=_profiler)  # Pass profiler for H2H lookups
     result = model.train(_matches, model_type='random_forest')
@@ -1667,8 +1670,8 @@ def main():
     with st.spinner("Loading data and training model... (first load takes ~30 seconds)"):
         try:
             matches = load_all_data()
-            profiler, profiles = build_profiler_and_profiles(matches)
-            model, train_result = get_trained_model(matches, profiles, profiler)
+            profiler, profiles = build_profiler_and_profiles(matches, CACHE_BUST)
+            model, train_result = get_trained_model(matches, profiles, profiler, CACHE_BUST)
         except Exception as e:
             st.error(f"Error loading data: {e}")
             st.info("Try running: `python src/data_loader.py` first to download data")
