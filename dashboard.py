@@ -29,6 +29,12 @@ st.set_page_config(
 from data_loader import load_matches, preprocess_matches
 from player_profiler import PlayerProfiler
 from matchup_model import MatchupModel
+from accuracy_simulator import (
+    get_predefined_periods, 
+    simulate_accuracy, 
+    format_simulation_results,
+    get_simulation_summary
+)
 import re
 
 
@@ -1096,6 +1102,218 @@ def page_calendar_tournaments():
     st.dataframe(display_df, use_container_width=True, hide_index=True)
 
 
+def page_historical_accuracy():
+    """Display historical model accuracy simulation over various time periods."""
+    st.title("📊 Historical Accuracy Analysis")
+    
+    st.markdown("""
+    **Simulate and analyze historical model performance** across different time periods.
+    The simulator trains on historical data and tests predictions on subsequent matches
+    to show how the model would have performed.
+    """)
+    
+    st.markdown("---")
+    
+    # Get predefined periods
+    periods = get_predefined_periods()
+    
+    # Tabs for different selection methods
+    tab1, tab2 = st.tabs(["📅 Predefined Periods", "🎯 Custom Date Range"])
+    
+    with tab1:
+        st.subheader("Quick Analysis with Predefined Periods")
+        
+        # Create columns for period buttons
+        col1, col2, col3 = st.columns(3)
+        
+        selected_period = None
+        with col1:
+            if st.button("📆 Current Week", key="btn_week", use_container_width=True):
+                selected_period = periods['current_week']
+        with col2:
+            if st.button("📅 Current Month", key="btn_month", use_container_width=True):
+                selected_period = periods['current_month']
+        with col3:
+            if st.button("📊 Last Month", key="btn_last_month", use_container_width=True):
+                selected_period = periods['last_month']
+        
+        st.markdown("")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("📈 Last 1 Month", key="btn_1m", use_container_width=True):
+                selected_period = periods['1_month']
+        with col2:
+            if st.button("📈 Last 3 Months", key="btn_3m", use_container_width=True):
+                selected_period = periods['3_months']
+        with col3:
+            if st.button("📈 Last 6 Months", key="btn_6m", use_container_width=True):
+                selected_period = periods['6_months']
+        
+        st.markdown("")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("📈 Last 1 Year", key="btn_1y", use_container_width=True):
+                selected_period = periods['1_year']
+        
+        # Run simulation if period selected
+        if selected_period:
+            with st.spinner(f"⏳ Running accuracy simulation for {selected_period.name}..."):
+                result = simulate_accuracy(
+                    start_date=selected_period.start_date,
+                    end_date=selected_period.end_date,
+                    period_name=selected_period.name
+                )
+            
+            if result['status'] == 'success':
+                _display_accuracy_results(result)
+            else:
+                st.error(f"❌ Simulation Error: {result['error']}")
+    
+    with tab2:
+        st.subheader("Custom Date Range Analysis")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            start_date = st.date_input(
+                "Start Date",
+                value=datetime.now() - timedelta(days=180),
+                max_value=datetime.now()
+            )
+        with col2:
+            end_date = st.date_input(
+                "End Date",
+                value=datetime.now(),
+                min_value=start_date,
+                max_value=datetime.now()
+            )
+        
+        if st.button("🔍 Analyze Custom Period", use_container_width=True):
+            if end_date <= start_date:
+                st.error("❌ End date must be after start date")
+            else:
+                with st.spinner("⏳ Running accuracy simulation..."):
+                    result = simulate_accuracy(
+                        start_date=start_date.strftime('%Y-%m-%d'),
+                        end_date=end_date.strftime('%Y-%m-%d'),
+                        period_name=f"{start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}"
+                    )
+                
+                if result['status'] == 'success':
+                    _display_accuracy_results(result)
+                else:
+                    st.error(f"❌ Simulation Error: {result['error']}")
+
+
+def _display_accuracy_results(result: Dict):
+    """Helper function to display accuracy simulation results."""
+    formatted = format_simulation_results(result)
+    
+    # Main metrics row
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("📊 Overall Accuracy", formatted['accuracy_pct'])
+    
+    with col2:
+        st.metric("✅ Correct Predictions", formatted['correct_predictions'])
+    
+    with col3:
+        st.metric("📈 Total Predictions", formatted['total_predictions'])
+    
+    with col4:
+        st.metric("📅 Period", formatted['date_range'][:20] + "...")
+    
+    st.markdown("---")
+    
+    # Confidence breakdown
+    if 'confidence_breakdown' in formatted:
+        st.subheader("📊 Accuracy by Confidence Level")
+        conf_data = formatted['confidence_breakdown']
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            high_acc = conf_data['high']['accuracy']
+            high_count = conf_data['high']['count']
+            st.metric(
+                "🔴 High (≥65%)",
+                f"{high_acc:.1%}" if high_acc else "N/A",
+                f"{high_count} predictions"
+            )
+        
+        with col2:
+            med_acc = conf_data['medium']['accuracy']
+            med_count = conf_data['medium']['count']
+            st.metric(
+                "🟡 Medium (55-65%)",
+                f"{med_acc:.1%}" if med_acc else "N/A",
+                f"{med_count} predictions"
+            )
+        
+        with col3:
+            low_acc = conf_data['low']['accuracy']
+            low_count = conf_data['low']['count']
+            st.metric(
+                "🟢 Low (<55%)",
+                f"{low_acc:.1%}" if low_acc else "N/A",
+                f"{low_count} predictions"
+            )
+    
+    st.markdown("---")
+    
+    # Surface breakdown
+    if 'surface_breakdown' in formatted and formatted['surface_breakdown']:
+        st.subheader("🎾 Accuracy by Surface")
+        
+        surface_data = []
+        for surface, data in formatted['surface_breakdown'].items():
+            surface_data.append({
+                'Surface': surface,
+                'Accuracy': f"{data['accuracy']:.1%}",
+                'Predictions': data['count']
+            })
+        
+        surface_df = pd.DataFrame(surface_data)
+        st.dataframe(surface_df, use_container_width=True, hide_index=True)
+    
+    # Upset analysis
+    if 'upset_analysis' in formatted:
+        st.markdown("---")
+        st.subheader("⚠️ Upset Prediction Performance")
+        
+        upset = formatted['upset_analysis']
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("⚠️ Total Upsets Occurred", upset.get('total_upsets', 0))
+        
+        with col2:
+            upset_acc = upset.get('upset_accuracy', 0)
+            st.metric("🎯 Upset Recall", f"{upset_acc:.1%}" if upset_acc else "N/A")
+        
+        with col3:
+            upset_pred = upset.get('upset_predictions', 0)
+            st.metric("🔮 Upset Predictions Made", upset_pred)
+        
+        with col4:
+            upset_prec = upset.get('upset_precision', 0)
+            st.metric("✅ Upset Precision", f"{upset_prec:.1%}" if upset_prec else "N/A")
+    
+    # Summary text
+    st.markdown("---")
+    st.info(f"""
+    **📌 Summary:** {get_simulation_summary(formatted)}
+    
+    **Interpretation:**
+    - **Accuracy**: Percentage of correct predictions
+    - **Confidence Levels**: How accuracy varies by prediction confidence
+    - **Surface Breakdown**: Performance across different court types
+    - **Upset Analysis**: How well the model identifies and predicts upsets
+    """)
+
+
 # =============================================================================
 # MAIN APP
 # =============================================================================
@@ -1123,7 +1341,7 @@ def main():
     page = st.sidebar.radio(
         "Go to",
         ["📅 Match Calendar", "🎯 Upset Alerts", "👤 Player Profiles", 
-         "⚔️ Head-to-Head", "🏆 Leaderboards", "🗓️ Tournament Calendar"],
+         "⚔️ Head-to-Head", "🏆 Leaderboards", "🗓️ Tournament Calendar", "📊 Historical Accuracy"],
         index=0
     )
     
@@ -1160,6 +1378,8 @@ def main():
         page_leaderboards(profiles)
     elif "Tournament Calendar" in page:
         page_calendar_tournaments()
+    elif "Historical Accuracy" in page:
+        page_historical_accuracy()
 
 
 if __name__ == "__main__":
