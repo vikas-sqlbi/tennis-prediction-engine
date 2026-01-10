@@ -1677,18 +1677,9 @@ def main():
     # Load data with progress
     with st.spinner("Loading data and training model... (first load takes ~30 seconds)"):
         try:
-            st.write("Step 1/3: Loading matches...")
             matches = load_all_data()
-            st.write(f"✓ Loaded {len(matches)} matches")
-            
-            st.write("Step 2/3: Building player profiles...")
             profiler, profiles = build_profiler_and_profiles(matches, CACHE_BUST)
-            st.write(f"✓ Built {len(profiles)} player profiles")
-            
-            st.write("Step 3/3: Training model...")
             model, train_result = get_trained_model(matches, profiles, profiler, CACHE_BUST)
-            st.write(f"✓ Model trained (accuracy: {train_result.get('accuracy', 'N/A'):.1%})")
-            
         except Exception as e:
             import traceback
             st.error(f"Error: {str(e)}")
