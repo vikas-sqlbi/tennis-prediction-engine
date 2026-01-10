@@ -85,7 +85,8 @@ def get_predefined_periods() -> Dict[str, SimulationPeriod]:
 def simulate_accuracy(
     start_date: str,
     end_date: str,
-    period_name: str = 'Custom Period'
+    period_name: str = 'Custom Period',
+    use_subprocess: bool = True
 ) -> Dict:
     """
     Simulate historical accuracy by running backtest on a date range.
@@ -94,6 +95,7 @@ def simulate_accuracy(
         start_date: Start date in YYYY-MM-DD format
         end_date: End date in YYYY-MM-DD format
         period_name: Display name for the period
+        use_subprocess: If True, run backtest in subprocess to free memory after completion
     
     Returns:
         Dictionary with simulation results and analysis
@@ -102,16 +104,68 @@ def simulate_accuracy(
         logger.info(f"Running accuracy simulation for {period_name}: {start_date} to {end_date}")
         
         # Run backtest for the specified period
-        # Training data: from 7 years before start_date to start_date
+        # Training data: from 5 years before start_date to start_date
         # Test data: from start_date to end_date
         training_end = pd.to_datetime(start_date) - timedelta(days=1)
         
-        results_df, analysis = run_backtest(
-            train_end_date=training_end.strftime('%Y-%m-%d'),
-            test_start_date=start_date,
-            test_end_date=end_date,
-            min_matches=10
-        )
+        if use_subprocess:
+            # Run in subprocess to ensure memory is freed after completion
+            import multiprocessing as mp
+            import pickle
+            import tempfile
+            
+            def run_backtest_subprocess(train_end, test_start, test_end, output_file):
+                """Run backtest in subprocess and save results to file."""
+                try:
+                    results_df, analysis = run_backtest(
+                        train_end_date=train_end,
+                        test_start_date=test_start,
+                        test_end_date=test_end,
+                        min_matches=10
+                    )
+                    # Save to temp file
+                    with open(output_file, 'wb') as f:
+                        pickle.dump((results_df, analysis), f)
+                except Exception as e:
+                    logger.error(f"Subprocess backtest failed: {e}")
+                    with open(output_file, 'wb') as f:
+                        pickle.dump((None, None), f)
+            
+            # Create temp file for results
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.pkl') as tmp:
+                output_file = tmp.name
+            
+            # Run in subprocess
+            process = mp.Process(
+                target=run_backtest_subprocess,
+                args=(training_end.strftime('%Y-%m-%d'), start_date, end_date, output_file)
+            )
+            process.start()
+            process.join(timeout=300)  # 5 minute timeout
+            
+            if process.is_alive():
+                process.terminate()
+                process.join()
+                raise TimeoutError("Backtest timed out after 5 minutes")
+            
+            # Load results from temp file
+            with open(output_file, 'rb') as f:
+                results_df, analysis = pickle.load(f)
+            
+            # Clean up temp file
+            import os
+            os.unlink(output_file)
+            
+            if results_df is None:
+                raise ValueError("Backtest failed in subprocess")
+        else:
+            # Run directly (original behavior)
+            results_df, analysis = run_backtest(
+                train_end_date=training_end.strftime('%Y-%m-%d'),
+                test_start_date=start_date,
+                test_end_date=end_date,
+                min_matches=10
+            )
         
         # Format results for display
         simulation_result = {

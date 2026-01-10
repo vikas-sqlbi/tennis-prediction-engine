@@ -119,15 +119,15 @@ def download_atp_rankings(force: bool = False) -> Optional[Path]:
     return None
 
 
-def get_rolling_years(window_size: int = 7) -> List[int]:
+def get_rolling_years(window_size: int = 5) -> List[int]:
     """
     Get a rolling window of years ending at current year.
     
     Args:
-        window_size: Number of years to include (default 7)
+        window_size: Number of years to include (default 5, reduced from 7 for memory efficiency)
     
     Returns:
-        List of years, e.g., [2020, 2021, 2022, 2023, 2024, 2025, 2026]
+        List of years, e.g., [2022, 2023, 2024, 2025, 2026]
     """
     current_year = datetime.now().year
     
@@ -277,18 +277,27 @@ def get_h2h(matches_df: pd.DataFrame, player1: str, player2: str) -> pd.DataFram
     return matches_df[mask].copy()
 
 
-def preprocess_matches(matches_df: pd.DataFrame) -> pd.DataFrame:
+def preprocess_matches(matches_df: pd.DataFrame, drop_unused_cols: bool = True) -> pd.DataFrame:
     """
     Preprocess matches dataframe:
     - Parse dates
     - Calculate derived columns
     - Handle missing values
+    - Optionally drop unused columns to save memory
+    
+    Args:
+        matches_df: Raw matches dataframe
+        drop_unused_cols: If True, drop columns not used by models (saves ~40% memory)
     """
     df = matches_df.copy()
     
     # Parse tournament date (TML uses same format as Sackmann: YYYYMMDD)
     df['tourney_date'] = pd.to_datetime(df['tourney_date'], format='%Y%m%d', errors='coerce')
     df['year'] = df['tourney_date'].dt.year
+    
+    # Create match_date for compatibility
+    if 'match_date' not in df.columns:
+        df['match_date'] = df['tourney_date']
     
     # Fill missing surfaces
     df['surface'] = df['surface'].fillna('Unknown')
@@ -312,6 +321,17 @@ def preprocess_matches(matches_df: pd.DataFrame) -> pd.DataFrame:
         df['loser_2nd_won_pct'] = df['l_2ndWon'] / (df['l_svpt'] - df['l_1stIn'])
         df['loser_ace_pct'] = df['l_ace'] / df['l_svpt']
         df['loser_df_pct'] = df['l_df'] / df['l_svpt']
+    
+    # Drop columns we don't use to save memory (~40% reduction)
+    if drop_unused_cols:
+        unused_cols = [
+            'draw_size', 'match_num', 'winner_seed', 'loser_seed',
+            'winner_entry', 'loser_entry', 'winner_ioc', 'loser_ioc',
+            'best_of', 'round', 'minutes'
+        ]
+        cols_to_drop = [col for col in unused_cols if col in df.columns]
+        if cols_to_drop:
+            df = df.drop(columns=cols_to_drop)
     
     return df
 
