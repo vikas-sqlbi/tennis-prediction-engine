@@ -78,8 +78,22 @@ def download_atp_matches(years: List[int], force: bool = False) -> List[Path]:
     for year in years:
         url = f"{TML_BASE_URL}{year}.csv"
         filepath = DATA_DIR / f"atp_matches_{year}.csv"
+        
+        # Check if file exists locally first
+        if filepath.exists() and not force:
+            logger.info(f"{filepath.name} already exists, skipping.")
+            downloaded.append(filepath)
+            continue
+            
+        # Try to download, but don't fail if current year doesn't exist yet
         if download_file(url, filepath, force):
             downloaded.append(filepath)
+        elif year == datetime.now().year:
+            # Current year might not exist in TML yet, that's OK
+            logger.info(f"Current year {year} data not available yet, skipping")
+        else:
+            # Historical year missing is more concerning but don't fail
+            logger.warning(f"Could not download data for {year}, skipping")
     
     return downloaded
 
@@ -191,7 +205,8 @@ def load_matches(
         existing_files.extend(downloaded)
     
     if not existing_files:
-        raise FileNotFoundError("No match files found. Run download first.")
+        logger.error(f"No match files found for years {years}")
+        raise FileNotFoundError(f"No match files found. Tried years: {years}. Run download first or check if data exists.")
     
     dfs = []
     for f in sorted(set(existing_files)):
