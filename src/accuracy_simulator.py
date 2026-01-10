@@ -86,7 +86,7 @@ def simulate_accuracy(
     start_date: str,
     end_date: str,
     period_name: str = 'Custom Period',
-    use_subprocess: bool = True
+    use_subprocess: bool = False  # Disabled by default - causes issues on Streamlit Cloud
 ) -> Dict:
     """
     Simulate historical accuracy by running backtest on a date range.
