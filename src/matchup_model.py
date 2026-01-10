@@ -912,8 +912,8 @@ class MatchupModel:
             # Evaluate
             accuracy = accuracy_score(y_test, y_pred)
             
-            # Cross-validation
-            X_full_scaled = scaler.fit_transform(X)
+            # Cross-validation (use already-fitted scaler, don't refit!)
+            X_full_scaled = scaler.transform(X)
             cv_scores = cross_val_score(model, X_full_scaled, y, cv=min(5, len(X)//20))
             
             # Calculate precision/recall
