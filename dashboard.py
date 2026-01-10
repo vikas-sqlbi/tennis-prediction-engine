@@ -19,7 +19,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 # Cache bust token to invalidate old cached resources after model schema changes
-CACHE_BUST = "2026-01-10-v2-force-rebuild"
+CACHE_BUST = "2026-01-10-v3"
 
 # Page config - MUST be first Streamlit command
 st.set_page_config(
@@ -27,15 +27,6 @@ st.set_page_config(
     page_icon="🎾",
     layout="wide"
 )
-
-# Force clear all cached resources on load (aggressive cache bust for Streamlit Cloud)
-if 'cache_cleared' not in st.session_state:
-    try:
-        st.cache_data.clear()
-        st.cache_resource.clear()
-        st.session_state.cache_cleared = True
-    except:
-        pass
 
 
 
@@ -87,22 +78,30 @@ def load_all_data():
 @st.cache_resource(show_spinner=False)
 def build_profiler_and_profiles(_matches, _cache_bust: str = CACHE_BUST):
     """Build and cache player profiler and profiles."""
-    profiler = PlayerProfiler(_matches)
-    profiles = profiler.build_all_profiles(min_matches=10)  # Lower threshold to include more players
-    
-    # Initialize the player matcher with loaded profiles for dynamic name matching
-    from scraper import initialize_player_matcher
-    initialize_player_matcher(profiles)
-    
-    return profiler, profiles
+    try:
+        profiler = PlayerProfiler(_matches)
+        profiles = profiler.build_all_profiles(min_matches=10)  # Lower threshold to include more players
+        
+        # Initialize the player matcher with loaded profiles for dynamic name matching
+        from scraper import initialize_player_matcher
+        initialize_player_matcher(profiles)
+        
+        return profiler, profiles
+    except Exception as e:
+        st.error(f"Error building profiler: {str(e)}")
+        raise
 
 
 @st.cache_resource(show_spinner=False)
 def get_trained_model(_matches, _profiles, _profiler, _cache_bust: str = CACHE_BUST):
     """Train and cache the prediction model with H2H support."""
-    model = MatchupModel(_profiles, profiler=_profiler)  # Pass profiler for H2H lookups
-    result = model.train(_matches, model_type='random_forest')
-    return model, result
+    try:
+        model = MatchupModel(_profiles, profiler=_profiler)  # Pass profiler for H2H lookups
+        result = model.train(_matches, model_type='random_forest')
+        return model, result
+    except Exception as e:
+        st.error(f"Error training model: {str(e)}")
+        raise
 
 
 @st.cache_data(ttl=300, show_spinner=False)  # Cache for 5 minutes
