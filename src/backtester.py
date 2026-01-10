@@ -96,14 +96,18 @@ def run_backtest(
     train_result = model.train(train_data, model_type='random_forest')
     logger.info(f"Model trained: accuracy={train_result['accuracy']:.1%}")
     
-    # Train dedicated upset model
-    logger.info("Training upset model...")
-    upset_train_result = model.train_upset_model(train_data, upset_threshold=0.40)
-    if 'error' in upset_train_result:
-        logger.warning(f"Upset model training failed: {upset_train_result['error']}")
-        upset_train_result = None
-    else:
-        logger.info(f"Upset model trained: accuracy={upset_train_result['upset_accuracy']:.1%}")
+    # Train surface-specific upset models
+    logger.info("Training surface-specific upset models...")
+    upset_train_result = model.train_surface_specific_upset_models(train_data, upset_threshold=0.40)
+    
+    # Log results for each surface
+    for surface in ['hard', 'clay', 'grass']:
+        if surface in upset_train_result:
+            result = upset_train_result[surface]
+            if 'error' in result:
+                logger.warning(f"{surface.capitalize()} upset model: {result['error']}")
+            else:
+                logger.info(f"{surface.capitalize()} upset model: accuracy={result['accuracy']:.1%}, precision={result['precision']:.1%}, recall={result['recall']:.1%}")
     
     # Run predictions on test data
     logger.info("Running predictions on test matches...")
