@@ -60,6 +60,19 @@ The prediction model uses:
 - **Fatigue** - Matches played in last 7/30 days
 - **ELO ratings** - Overall and surface-specific
 
+## Branch Strategy
+
+- `main`: production-ready branch; protected and tagged on releases.
+- `develop`: integration branch for upcoming work; feature branches merge here via PRs.
+- `feature/*`: short-lived branches cut from `develop` (e.g., `feature/improve-elo`); rebase as needed and open PRs into `develop`.
+- `hotfix/*`: emergency fixes cut from `main`; merge back to `main` and then into `develop` to keep histories aligned.
+- `release/*` (optional): stabilization branches from `develop`; once verified, merge to `main`, tag, and back-merge to `develop`.
+
+## FAQ
+
+**Is this agent free of cost?**  
+The built-in repository agent does not add new project costs; standard GitHub/Copilot billing for your account or organization still applies.
+
 ## License
 
 For personal/experimental use only.
