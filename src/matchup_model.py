@@ -78,13 +78,22 @@ class MatchupModel:
         self.profiles = player_profiles
         self.profiler = profiler  # Used for H2H lookups
         self.model = None
-        self.upset_model = None  # Dedicated upset prediction model
+        self.upset_model = None  # Deprecated: Legacy upset prediction model
+        # Surface-specific upset models
+        self.upset_model_hard = None
+        self.upset_model_clay = None
+        self.upset_model_grass = None
         self.scaler = StandardScaler()
+        # Surface-specific scalers
+        self.scaler_hard = StandardScaler()
+        self.scaler_clay = StandardScaler()
+        self.scaler_grass = StandardScaler()
         self.surface_encoder = LabelEncoder()
         self.level_encoder = LabelEncoder()
         self.feature_cols = []
         self.is_trained = False
-        self.upset_model_trained = False  # Whether upset model is trained
+        self.upset_model_trained = False  # Legacy flag
+        self.surface_models_trained = {}  # Track which surface models are trained
         self._player_cache = {}  # Cache player lookups to avoid repeated warnings
         self._missing_players = set()  # Track players we've already warned about
     
@@ -789,6 +798,155 @@ class MatchupModel:
         
         return results
     
+    def train_surface_specific_upset_models(self, matches_df: pd.DataFrame, upset_threshold: float = 0.40) -> Dict:
+        """
+        Train separate upset prediction models for each surface (Hard, Clay, Grass).
+        This addresses the finding that hard court upset predictions have different patterns.
+        
+        Args:
+            matches_df: Historical matches dataframe
+            upset_threshold: Probability threshold to define upsets
+        
+        Returns:
+            Dictionary with training metrics for each surface
+        """
+        logger.info("="*60)
+        logger.info("Training surface-specific upset prediction models...")
+        logger.info("="*60)
+        
+        # Create features for all matches
+        feature_df = self.create_matchup_features(matches_df)
+        
+        if len(feature_df) < 100:
+            raise ValueError(f"Not enough training data: {len(feature_df)} samples")
+        
+        # Encode categorical features
+        feature_df['surface_encoded'] = self.surface_encoder.fit_transform(
+            feature_df['surface'].fillna('Hard')
+        )
+        feature_df['tourney_level_encoded'] = self.level_encoder.fit_transform(
+            feature_df['tourney_level'].fillna('A').astype(str)
+        )
+        
+        # Create upset labels for all matches
+        upset_targets = []
+        for _, row in feature_df.iterrows():
+            p1_rank = row.get('p1_rank', 100)
+            p2_rank = row.get('p2_rank', 100)
+            is_upset = (p1_rank > p2_rank) and (row['target'] == 1)
+            upset_targets.append(1 if is_upset else 0)
+        
+        feature_df['upset_target'] = upset_targets
+        
+        results = {}
+        
+        # Train model for each surface
+        for surface in ['Hard', 'Clay', 'Grass']:
+            logger.info(f"\n{'='*60}")
+            logger.info(f"Training {surface} court upset model...")
+            logger.info(f"{'='*60}")
+            
+            # Filter data for this surface
+            surface_df = feature_df[feature_df['surface'] == surface].copy()
+            
+            if len(surface_df) < 50:
+                logger.warning(f"Not enough {surface} court data ({len(surface_df)} matches) - skipping")
+                results[surface.lower()] = {'error': 'insufficient_data', 'samples': len(surface_df)}
+                continue
+            
+            X = surface_df[self.feature_cols].fillna(0)
+            y = surface_df['upset_target']
+            
+            # Check positive samples
+            n_positive = sum(y)
+            n_negative = len(y) - n_positive
+            logger.info(f"{surface} data: {len(surface_df)} matches, {n_positive} upsets ({n_positive/len(surface_df)*100:.1f}%), {n_negative} favorites")
+            
+            if n_positive < 10:
+                logger.warning(f"Very few upset cases ({n_positive}) for {surface} - model may not be reliable")
+                results[surface.lower()] = {'error': 'insufficient_upset_cases', 'upset_count': n_positive}
+                continue
+            
+            # Train/test split
+            try:
+                X_train, X_test, y_train, y_test = train_test_split(
+                    X, y, test_size=0.2, random_state=42, stratify=y
+                )
+            except ValueError:
+                X_train, X_test, y_train, y_test = train_test_split(
+                    X, y, test_size=0.2, random_state=42
+                )
+            
+            # Get surface-specific scaler
+            if surface == 'Hard':
+                scaler = self.scaler_hard
+            elif surface == 'Clay':
+                scaler = self.scaler_clay
+            else:
+                scaler = self.scaler_grass
+            
+            # Scale features
+            X_train_scaled = scaler.fit_transform(X_train)
+            X_test_scaled = scaler.transform(X_test)
+            
+            # Train surface-specific upset model
+            model = RandomForestClassifier(
+                n_estimators=100,
+                max_depth=8,
+                min_samples_split=10,
+                random_state=42,
+                class_weight='balanced'
+            )
+            
+            model.fit(X_train_scaled, y_train)
+            y_pred = model.predict(X_test_scaled)
+            
+            # Store model
+            if surface == 'Hard':
+                self.upset_model_hard = model
+            elif surface == 'Clay':
+                self.upset_model_clay = model
+            else:
+                self.upset_model_grass = model
+            
+            # Evaluate
+            accuracy = accuracy_score(y_test, y_pred)
+            
+            # Cross-validation (use already-fitted scaler, don't refit!)
+            X_full_scaled = scaler.transform(X)
+            cv_scores = cross_val_score(model, X_full_scaled, y, cv=min(5, len(X)//20))
+            
+            # Calculate precision/recall
+            from sklearn.metrics import precision_score, recall_score
+            precision = precision_score(y_test, y_pred, zero_division=0)
+            recall = recall_score(y_test, y_pred, zero_division=0)
+            
+            results[surface.lower()] = {
+                'accuracy': accuracy,
+                'precision': precision,
+                'recall': recall,
+                'cv_mean': cv_scores.mean(),
+                'cv_std': cv_scores.std(),
+                'train_samples': len(X_train),
+                'test_samples': len(X_test),
+                'upset_count': n_positive,
+                'upset_rate': n_positive / len(surface_df)
+            }
+            
+            self.surface_models_trained[surface.lower()] = True
+            
+            logger.info(f"{surface} model trained:")
+            logger.info(f"  Accuracy: {accuracy:.1%}")
+            logger.info(f"  Precision: {precision:.1%}")
+            logger.info(f"  Recall: {recall:.1%}")
+            logger.info(f"  CV Score: {cv_scores.mean():.1%} ± {cv_scores.std():.1%}")
+        
+        logger.info(f"\n{'='*60}")
+        logger.info("Surface-specific upset models training complete!")
+        logger.info(f"{'='*60}")
+        
+        return results
+    
     def get_feature_importance(self) -> Optional[pd.DataFrame]:
         """Get feature importance DataFrame after training."""
         if hasattr(self, 'feature_importance'):
@@ -872,12 +1030,49 @@ class MatchupModel:
         
         # FIX: Upset probability requires valid market odds
         # Without knowing who the market favorite is, upset probability is meaningless
+        # UPDATE: Use surface-specific upset models when available
         if fav is None:
             upset_prob = 0.0  # Cannot calculate upset without market odds
-        elif fav == player1_name:
-            upset_prob = p2_win_prob  # Underdog (p2) winning
         else:
-            upset_prob = p1_win_prob  # Underdog (p1) winning
+            # Try to use surface-specific upset model if available
+            surface_key = surface.lower() if surface else 'hard'
+            surface_model = None
+            surface_scaler = None
+            
+            if surface_key == 'hard' and self.upset_model_hard is not None:
+                surface_model = self.upset_model_hard
+                surface_scaler = self.scaler_hard
+            elif surface_key == 'clay' and self.upset_model_clay is not None:
+                surface_model = self.upset_model_clay
+                surface_scaler = self.scaler_clay
+            elif surface_key == 'grass' and self.upset_model_grass is not None:
+                surface_model = self.upset_model_grass
+                surface_scaler = self.scaler_grass
+            
+            # Use surface-specific model if available, otherwise fall back to probability-based
+            if surface_model is not None and surface_scaler is not None:
+                try:
+                    # Scale features for upset model
+                    X_scaled = surface_scaler.transform(X)
+                    # Get upset probability from surface-specific model
+                    # Model was trained to predict: 1 = upset occurred, 0 = favorite won
+                    proba = surface_model.predict_proba(X_scaled)[0]
+                    upset_prob = proba[1]  # Probability of class 1 (upset)
+                    logger.debug(f"Using {surface_key} upset model: upset_prob={upset_prob:.1%}")
+                except Exception as e:
+                    logger.debug(f"Error using {surface_key} upset model: {e}, falling back to win probability")
+                    # Fallback to original method
+                    if fav == player1_name:
+                        upset_prob = p2_win_prob
+                    else:
+                        upset_prob = p1_win_prob
+            else:
+                # Fall back to win probability method
+                logger.debug(f"No {surface_key} upset model available, using win probability method")
+                if fav == player1_name:
+                    upset_prob = p2_win_prob  # Underdog (p2) winning
+                else:
+                    upset_prob = p1_win_prob  # Underdog (p1) winning
         
         # Style matchup description
         style1 = p1.get('style_cluster', 'All-Court')
