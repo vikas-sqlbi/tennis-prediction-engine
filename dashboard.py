@@ -19,7 +19,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 # Cache bust token to invalidate old cached resources after model schema changes
-CACHE_BUST = "2026-01-10-surface-upset"
+CACHE_BUST = "2026-01-10-v2-force-rebuild"
 
 # Page config - MUST be first Streamlit command
 st.set_page_config(
@@ -27,6 +27,15 @@ st.set_page_config(
     page_icon="🎾",
     layout="wide"
 )
+
+# Force clear all cached resources on load (aggressive cache bust for Streamlit Cloud)
+if 'cache_cleared' not in st.session_state:
+    try:
+        st.cache_data.clear()
+        st.cache_resource.clear()
+        st.session_state.cache_cleared = True
+    except:
+        pass
 
 
 
