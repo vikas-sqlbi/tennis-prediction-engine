@@ -59,7 +59,9 @@ def run_backtest(
         Tuple of (results DataFrame, analysis dict)
     """
     logger.info(f"Loading all historical data...")
-    all_matches = load_matches(years=list(range(2018, 2025)), include_lower_level=True)
+    # Load data from 2018 to current year
+    current_year = datetime.now().year
+    all_matches = load_matches(years=list(range(2018, current_year + 1)))
     all_matches = preprocess_matches(all_matches)
     
     # Parse dates
@@ -94,6 +96,15 @@ def run_backtest(
     model = MatchupModel(profiles, profiler=profiler)
     train_result = model.train(train_data, model_type='random_forest')
     logger.info(f"Model trained: accuracy={train_result['accuracy']:.1%}")
+    
+    # Train dedicated upset model
+    logger.info("Training upset model...")
+    upset_train_result = model.train_upset_model(train_data, upset_threshold=0.40)
+    if 'error' in upset_train_result:
+        logger.warning(f"Upset model training failed: {upset_train_result['error']}")
+        upset_train_result = None
+    else:
+        logger.info(f"Upset model trained: accuracy={upset_train_result['upset_accuracy']:.1%}")
     
     # Run predictions on test data
     logger.info("Running predictions on test matches...")
@@ -140,7 +151,7 @@ def run_backtest(
         correct = predicted_winner == winner
         
         # Determine if upset was predicted
-        upset_predicted = pred.upset_probability >= 0.35
+        upset_predicted = pred.upset_probability >= 0.40
         upset_correct = upset_predicted and was_upset and (predicted_winner == underdog)
         
         results.append(BacktestResult(

@@ -12,6 +12,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Dict
 import sys
 
 # Add src to path
@@ -29,7 +30,17 @@ st.set_page_config(
 from data_loader import load_matches, preprocess_matches
 from player_profiler import PlayerProfiler
 from matchup_model import MatchupModel
+from accuracy_simulator import (
+    get_predefined_periods, 
+    simulate_accuracy, 
+    format_simulation_results,
+    get_simulation_summary
+)
 import re
+
+# Initialize session state for prediction history
+if 'prediction_history' not in st.session_state:
+    st.session_state.prediction_history = []
 
 
 def clean_time_display(time_str: str) -> str:
@@ -1096,6 +1107,465 @@ def page_calendar_tournaments():
     st.dataframe(display_df, use_container_width=True, hide_index=True)
 
 
+def page_historical_accuracy():
+    """Display historical model accuracy simulation over various time periods."""
+    st.title("📊 Historical Accuracy Analysis")
+    
+    st.markdown("""
+    **Simulate and analyze historical model performance** across different time periods.
+    The simulator trains on historical data and tests predictions on subsequent matches
+    to show how the model would have performed.
+    """)
+    
+    st.markdown("---")
+    
+    # Get predefined periods
+    periods = get_predefined_periods()
+    
+    # Tabs for different selection methods
+    tab1, tab2 = st.tabs(["📅 Predefined Periods", "🎯 Custom Date Range"])
+    
+    with tab1:
+        st.subheader("Quick Analysis with Predefined Periods")
+        
+        # Create columns for period buttons
+        col1, col2, col3 = st.columns(3)
+        
+        selected_period = None
+        with col1:
+            if st.button("📆 Current Week", key="btn_week", use_container_width=True):
+                selected_period = periods['current_week']
+        with col2:
+            if st.button("📅 Current Month", key="btn_month", use_container_width=True):
+                selected_period = periods['current_month']
+        with col3:
+            if st.button("📊 Last Month", key="btn_last_month", use_container_width=True):
+                selected_period = periods['last_month']
+        
+        st.markdown("")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("📈 Last 1 Month", key="btn_1m", use_container_width=True):
+                selected_period = periods['1_month']
+        with col2:
+            if st.button("📈 Last 3 Months", key="btn_3m", use_container_width=True):
+                selected_period = periods['3_months']
+        with col3:
+            if st.button("📈 Last 6 Months", key="btn_6m", use_container_width=True):
+                selected_period = periods['6_months']
+        
+        st.markdown("")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("📈 Last 1 Year", key="btn_1y", use_container_width=True):
+                selected_period = periods['1_year']
+        
+        # Run simulation if period selected
+        if selected_period:
+            with st.spinner(f"⏳ Running accuracy simulation for {selected_period.name}..."):
+                result = simulate_accuracy(
+                    start_date=selected_period.start_date,
+                    end_date=selected_period.end_date,
+                    period_name=selected_period.name
+                )
+            
+            if result['status'] == 'success':
+                _display_accuracy_results(result)
+            else:
+                st.error(f"❌ Simulation Error: {result['error']}")
+    
+    with tab2:
+        st.subheader("Custom Date Range Analysis")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            start_date = st.date_input(
+                "Start Date",
+                value=datetime.now() - timedelta(days=180),
+                max_value=datetime.now()
+            )
+        with col2:
+            end_date = st.date_input(
+                "End Date",
+                value=datetime.now(),
+                min_value=start_date,
+                max_value=datetime.now()
+            )
+        
+        if st.button("🔍 Analyze Custom Period", use_container_width=True):
+            if end_date <= start_date:
+                st.error("❌ End date must be after start date")
+            else:
+                with st.spinner("⏳ Running accuracy simulation..."):
+                    result = simulate_accuracy(
+                        start_date=start_date.strftime('%Y-%m-%d'),
+                        end_date=end_date.strftime('%Y-%m-%d'),
+                        period_name=f"{start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}"
+                    )
+                
+                if result['status'] == 'success':
+                    _display_accuracy_results(result)
+                else:
+                    st.error(f"❌ Simulation Error: {result['error']}")
+
+
+def _display_accuracy_results(result: Dict):
+    """Helper function to display accuracy simulation results."""
+    formatted = format_simulation_results(result)
+    
+    # Main metrics row
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("📊 Overall Accuracy", formatted['accuracy_pct'])
+    
+    with col2:
+        st.metric("✅ Correct Predictions", formatted['correct_predictions'])
+    
+    with col3:
+        st.metric("📈 Total Predictions", formatted['total_predictions'])
+    
+    with col4:
+        st.metric("📅 Period", formatted['date_range'][:20] + "...")
+    
+    st.markdown("---")
+    
+    # Confidence breakdown
+    if 'confidence_breakdown' in formatted:
+        st.subheader("📊 Accuracy by Confidence Level")
+        conf_data = formatted['confidence_breakdown']
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            high_acc = conf_data['high']['accuracy']
+            high_count = conf_data['high']['count']
+            st.metric(
+                "🔴 High (≥65%)",
+                f"{high_acc:.1%}" if high_acc else "N/A",
+                f"{high_count} predictions"
+            )
+        
+        with col2:
+            med_acc = conf_data['medium']['accuracy']
+            med_count = conf_data['medium']['count']
+            st.metric(
+                "🟡 Medium (55-65%)",
+                f"{med_acc:.1%}" if med_acc else "N/A",
+                f"{med_count} predictions"
+            )
+        
+        with col3:
+            low_acc = conf_data['low']['accuracy']
+            low_count = conf_data['low']['count']
+            st.metric(
+                "🟢 Low (<55%)",
+                f"{low_acc:.1%}" if low_acc else "N/A",
+                f"{low_count} predictions"
+            )
+    
+    st.markdown("---")
+    
+    # Surface breakdown
+    if 'surface_breakdown' in formatted and formatted['surface_breakdown']:
+        st.subheader("🎾 Accuracy by Surface")
+        
+        surface_data = []
+        for surface, data in formatted['surface_breakdown'].items():
+            surface_data.append({
+                'Surface': surface,
+                'Accuracy': f"{data['accuracy']:.1%}",
+                'Predictions': data['count']
+            })
+        
+        surface_df = pd.DataFrame(surface_data)
+        st.dataframe(surface_df, use_container_width=True, hide_index=True)
+    
+    # Upset analysis
+    if 'upset_analysis' in formatted:
+        st.markdown("---")
+        st.subheader("⚠️ Upset Prediction Performance")
+        
+        upset = formatted['upset_analysis']
+        col1, col2, col3, col4, col5 = st.columns(5)
+        
+        with col1:
+            st.metric("⚠️ Total Upsets Occurred", upset.get('total_upsets', 0))
+        
+        with col2:
+            st.metric("🎯 Upsets Correctly Predicted", upset.get('upsets_correctly_predicted', 0))
+        
+        with col3:
+            upset_acc = upset.get('upset_accuracy', 0)
+            st.metric("📈 Upset Recall", f"{upset_acc:.1%}" if upset_acc else "N/A")
+        
+        with col4:
+            upset_pred = upset.get('upset_predictions', 0)
+            st.metric("🔮 Upset Predictions Made", upset_pred)
+        
+        with col5:
+            upset_prec = upset.get('upset_precision', 0)
+            st.metric("✅ Upset Precision", f"{upset_prec:.1%}" if upset_prec else "N/A")
+    
+    # Summary text
+    st.markdown("---")
+    st.info(f"""
+    **📌 Summary:** {get_simulation_summary(formatted)}
+    
+    **Interpretation:**
+    - **Accuracy**: Percentage of correct predictions
+    - **Confidence Levels**: How accuracy varies by prediction confidence
+    - **Surface Breakdown**: Performance across different court types
+    - **Upset Analysis**: How well the model identifies and predicts upsets
+    """)
+
+    # Optional detailed results table (guarded for performance)
+    results_df = result.get('results_df')
+    if results_df is not None and len(results_df) > 0:
+        with st.expander("Show prediction details (may be slower)"):
+            display_cols = [
+                'match_date', 'tournament', 'surface', 'player1', 'player2',
+                'predicted_winner', 'actual_winner', 'correct', 'confidence',
+                'upset_predicted', 'was_upset', 'upset_correct', 'p1_win_prob', 'p2_win_prob'
+            ]
+            existing_cols = [c for c in display_cols if c in results_df.columns]
+            preview_df = results_df[existing_cols].copy()
+            preview_df['confidence'] = preview_df['confidence'].apply(lambda x: f"{x:.1%}")
+            preview_df['p1_win_prob'] = preview_df['p1_win_prob'].apply(lambda x: f"{x:.1%}")
+            preview_df['p2_win_prob'] = preview_df['p2_win_prob'].apply(lambda x: f"{x:.1%}")
+            max_rows = 200
+            if len(preview_df) > max_rows:
+                st.caption(f"Showing first {max_rows} of {len(preview_df)} matches")
+                preview_df = preview_df.head(max_rows)
+            st.dataframe(preview_df, use_container_width=True, hide_index=True)
+
+
+def page_custom_predictor(model, profiles):
+    """Custom match prediction page."""
+    st.header("🔮 Custom Match Predictor")
+    st.markdown("Predict the outcome of any hypothetical tennis match between two players.")
+
+    # Player selection
+    st.subheader("👤 Select Players")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("**Player 1**")
+        player1_options = sorted(profiles['player_name'].unique())
+        player1 = st.selectbox("Choose Player 1", player1_options, key="p1")
+
+    with col2:
+        st.markdown("**Player 2**")
+        player2_options = sorted(profiles['player_name'].unique())
+        player2 = st.selectbox("Choose Player 2", player2_options, key="p2")
+
+    # Match conditions
+    st.subheader("🎾 Match Conditions")
+
+    col3, col4, col5 = st.columns(3)
+
+    with col3:
+        surface = st.selectbox("Surface", ["Hard", "Clay", "Grass", "Carpet"], index=0)
+
+    with col4:
+        tournament_level = st.selectbox("Tournament Level", ["G", "M", "A", "B", "C"], 
+                                       format_func=lambda x: {"G": "Grand Slam", "M": "Masters 1000", "A": "ATP 500", "B": "ATP 250", "C": "Challenger"}[x],
+                                       index=2)
+
+    with col5:
+        # Try to determine favorite based on rankings if available
+        p1_profile = profiles[profiles['player_name'] == player1]
+        p2_profile = profiles[profiles['player_name'] == player2]
+
+        favorite_options = [f"{player1} (Favorite)", f"{player2} (Favorite)", "Unknown/No Odds"]
+        favorite_idx = 2  # Default to unknown
+
+        if not p1_profile.empty and not p2_profile.empty:
+            p1_rank = p1_profile['current_rank'].iloc[0] if 'current_rank' in p1_profile.columns else 999
+            p2_rank = p2_profile['current_rank'].iloc[0] if 'current_rank' in p2_profile.columns else 999
+
+            if pd.notna(p1_rank) and pd.notna(p2_rank):
+                if p1_rank < p2_rank:
+                    favorite_options[0] = f"{player1} (Rank {int(p1_rank)})"
+                    favorite_options[1] = f"{player2} (Rank {int(p2_rank)})"
+                    favorite_idx = 0
+                elif p2_rank < p1_rank:
+                    favorite_options[0] = f"{player1} (Rank {int(p1_rank)})"
+                    favorite_options[1] = f"{player2} (Rank {int(p2_rank)})"
+                    favorite_idx = 1
+
+        favorite = st.selectbox("Betting Favorite", favorite_options, index=favorite_idx)
+
+    # Prediction button
+    if st.button("🎯 Predict Match", type="primary", use_container_width=True):
+        if player1 == player2:
+            st.error("Please select two different players!")
+            return
+
+        with st.spinner("Analyzing match..."):
+            # Extract favorite name
+            if "Unknown" in favorite:
+                fav_name = None
+            else:
+                fav_name = favorite.split(" (")[0]
+
+            # Make prediction
+            prediction = model.predict_match(
+                player1, player2, 
+                surface=surface, 
+                favorite=fav_name,
+                tourney_level=tournament_level
+            )
+
+            if prediction is None:
+                st.error("Could not make prediction. One or both players may not be in our database.")
+                return
+
+        # Display results
+        st.success("Prediction Complete!")
+
+        # Main prediction
+        col_result1, col_result2 = st.columns(2)
+
+        with col_result1:
+            st.metric("Predicted Winner", prediction.predicted_winner)
+            st.metric("Confidence", f"{prediction.confidence:.1%}")
+
+        with col_result2:
+            st.metric("Player 1 Win Probability", f"{prediction.player1_win_prob:.1%}")
+            st.metric("Player 2 Win Probability", f"{prediction.player2_win_prob:.1%}")
+
+        # Upset analysis
+        if prediction.upset_probability > 0:
+            st.subheader("⚠️ Upset Analysis")
+
+            upset_level = "High" if prediction.upset_probability > 0.4 else "Medium" if prediction.upset_probability > 0.3 else "Low"
+
+            col_upset1, col_upset2, col_upset3 = st.columns(3)
+
+            with col_upset1:
+                st.metric("Upset Probability", f"{prediction.upset_probability:.1%}")
+
+            with col_upset2:
+                st.metric("Upset Risk Level", upset_level)
+
+            with col_upset3:
+                if fav_name:
+                    st.metric("Underdog", prediction.underdog if prediction.underdog != fav_name else prediction.favorite)
+                else:
+                    st.metric("Note", "No favorite set")
+
+            if prediction.upset_explanation:
+                st.info(f"💡 {prediction.upset_explanation}")
+
+        # Key factors
+        if prediction.key_factors:
+            st.subheader("🔑 Key Factors")
+            factors_text = "\n".join(f"• {factor}" for factor in prediction.key_factors[:5])  # Top 5
+            st.markdown(factors_text)
+
+        # Style matchup
+        st.subheader("🎭 Style Matchup")
+        st.info(f"**{prediction.style_matchup}**")
+
+        # Player comparison
+        st.subheader("📊 Player Comparison")
+
+        # Get player profiles for comparison
+        p1_data = profiles[profiles['player_name'] == player1].iloc[0] if not profiles[profiles['player_name'] == player1].empty else None
+        p2_data = profiles[profiles['player_name'] == player2].iloc[0] if not profiles[profiles['player_name'] == player2].empty else None
+
+        if p1_data is not None and p2_data is not None:
+            # Create comparison table
+            comparison_data = {
+                "Metric": ["Win %", "Ace %", "DF %", "Recent Form", "Style"],
+                player1: [
+                    f"{p1_data.get('overall_win_pct', 0):.1%}",
+                    f"{p1_data.get('ace_pct', 0):.1f}",
+                    f"{p1_data.get('df_pct', 0):.1f}",
+                    f"{p1_data.get('recent_form', 0):.2f}",
+                    p1_data.get('style_cluster', 'Unknown')
+                ],
+                player2: [
+                    f"{p2_data.get('overall_win_pct', 0):.1%}",
+                    f"{p2_data.get('ace_pct', 0):.1f}",
+                    f"{p2_data.get('df_pct', 0):.1f}",
+                    f"{p2_data.get('recent_form', 0):.2f}",
+                    p2_data.get('style_cluster', 'Unknown')
+                ]
+            }
+
+            comparison_df = pd.DataFrame(comparison_data)
+            st.dataframe(comparison_df, use_container_width=True, hide_index=True)
+
+        # Save to prediction history
+        prediction_record = {
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'player1': player1,
+            'player2': player2,
+            'surface': surface,
+            'tournament_level': tournament_level,
+            'favorite': fav_name,
+            'predicted_winner': prediction.predicted_winner,
+            'confidence': prediction.confidence,
+            'p1_win_prob': prediction.player1_win_prob,
+            'p2_win_prob': prediction.player2_win_prob,
+            'upset_probability': prediction.upset_probability,
+            'style_matchup': prediction.style_matchup
+        }
+        
+        st.session_state.prediction_history.append(prediction_record)
+        
+        # Show history summary
+        st.success(f"✅ Prediction saved! Total predictions made: {len(st.session_state.prediction_history)}")
+
+        # Disclaimer
+        st.caption("⚠️ **Disclaimer**: These predictions are for entertainment purposes only. Tennis matches can be unpredictable, and many factors (weather, injuries, form) can affect outcomes.")
+
+    # Prediction History
+    if st.session_state.prediction_history:
+        st.markdown("---")
+        st.subheader("📚 Prediction History")
+        
+        # Convert to dataframe for display
+        history_df = pd.DataFrame(st.session_state.prediction_history)
+        
+        # Show recent predictions (last 10)
+        recent_history = history_df.tail(10).copy()
+        recent_history['confidence'] = recent_history['confidence'].apply(lambda x: f"{x:.1%}")
+        recent_history['p1_win_prob'] = recent_history['p1_win_prob'].apply(lambda x: f"{x:.1%}")
+        recent_history['p2_win_prob'] = recent_history['p2_win_prob'].apply(lambda x: f"{x:.1%}")
+        recent_history['upset_probability'] = recent_history['upset_probability'].apply(lambda x: f"{x:.1%}")
+        
+        # Rename columns for display
+        display_cols = {
+            'timestamp': 'Time',
+            'player1': 'Player 1', 
+            'player2': 'Player 2',
+            'surface': 'Surface',
+            'predicted_winner': 'Predicted Winner',
+            'confidence': 'Confidence',
+            'upset_probability': 'Upset Risk'
+        }
+        
+        st.dataframe(
+            recent_history[list(display_cols.keys())].rename(columns=display_cols),
+            use_container_width=True,
+            hide_index=True
+        )
+        
+        if len(st.session_state.prediction_history) > 10:
+            st.caption(f"Showing last 10 of {len(st.session_state.prediction_history)} predictions")
+        
+        # Clear history button
+        if st.button("🗑️ Clear History"):
+            st.session_state.prediction_history = []
+            st.rerun()
+
+
 # =============================================================================
 # MAIN APP
 # =============================================================================
@@ -1103,6 +1573,25 @@ def page_calendar_tournaments():
 def main():
     # Title
     st.title("🎾 Tennis Upset Predictor")
+    
+    # Quick overview
+    st.markdown("""
+    **AI-powered tennis match predictions with upset detection.** 
+    Analyze upcoming matches, explore player profiles, and predict custom matchups.
+    """)
+    
+    col_overview1, col_overview2, col_overview3, col_overview4 = st.columns(4)
+    
+    with col_overview1:
+        st.metric("**Data Source**", "TML Database")
+    with col_overview2:
+        st.metric("**Model Type**", "Random Forest")
+    with col_overview3:
+        st.metric("**Key Feature**", "Upset Detection")
+    with col_overview4:
+        st.metric("**Predictions**", "56% Accurate")
+    
+    st.markdown("---")
     
     # Load data with progress
     with st.spinner("Loading data and training model... (first load takes ~30 seconds)"):
@@ -1123,7 +1612,7 @@ def main():
     page = st.sidebar.radio(
         "Go to",
         ["📅 Match Calendar", "🎯 Upset Alerts", "👤 Player Profiles", 
-         "⚔️ Head-to-Head", "🏆 Leaderboards", "🗓️ Tournament Calendar"],
+         "⚔️ Head-to-Head", "🏆 Leaderboards", "🗓️ Tournament Calendar", "🔮 Custom Predictor", "📊 Historical Accuracy"],
         index=0
     )
     
@@ -1144,6 +1633,16 @@ def main():
     st.sidebar.write(f"**CV Score:** {train_result['cv_mean']:.1%} ± {train_result['cv_std']:.1%}")
     st.sidebar.caption("Features: H2H, Fatigue, Form, Style")
     
+    # Feature importance chart
+    if 'feature_importance' in train_result and train_result['feature_importance'] is not None:
+        st.sidebar.markdown("**Top Features:**")
+        top_features = train_result['feature_importance'].head(5)
+        
+        for _, row in top_features.iterrows():
+            feature_name = row['feature'][:20] + "..." if len(row['feature']) > 20 else row['feature']
+            bar = "█" * int(row['importance'] * 20)  # Scale to 20 chars
+            st.sidebar.caption(f"{feature_name}: {bar}")
+    
     st.sidebar.markdown("---")
     st.sidebar.caption("Data: TML Database (TennisMyLife)")
     
@@ -1160,6 +1659,10 @@ def main():
         page_leaderboards(profiles)
     elif "Tournament Calendar" in page:
         page_calendar_tournaments()
+    elif "Custom Predictor" in page:
+        page_custom_predictor(model, profiles)
+    elif "Historical Accuracy" in page:
+        page_historical_accuracy()
 
 
 if __name__ == "__main__":
