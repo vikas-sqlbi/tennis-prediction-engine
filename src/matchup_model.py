@@ -846,8 +846,9 @@ class MatchupModel:
         except ValueError:
             features['tourney_level_encoded'] = self.level_encoder.transform(['A'])[0]
         
-        # Create feature vector
-        X = pd.DataFrame([features])[self.feature_cols].fillna(0)
+        # Create feature vector (tolerate missing columns in live inference)
+        feature_df = pd.DataFrame([features])
+        X = feature_df.reindex(columns=self.feature_cols, fill_value=0)
         
         # Predict
         p1_win_prob = self.model.predict_proba(X)[0][1]

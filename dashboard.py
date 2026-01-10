@@ -1289,20 +1289,23 @@ def _display_accuracy_results(result: Dict):
         st.subheader("⚠️ Upset Prediction Performance")
         
         upset = formatted['upset_analysis']
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3, col4, col5 = st.columns(5)
         
         with col1:
             st.metric("⚠️ Total Upsets Occurred", upset.get('total_upsets', 0))
         
         with col2:
-            upset_acc = upset.get('upset_accuracy', 0)
-            st.metric("🎯 Upset Recall", f"{upset_acc:.1%}" if upset_acc else "N/A")
+            st.metric("🎯 Upsets Correctly Predicted", upset.get('upsets_correctly_predicted', 0))
         
         with col3:
+            upset_acc = upset.get('upset_accuracy', 0)
+            st.metric("📈 Upset Recall", f"{upset_acc:.1%}" if upset_acc else "N/A")
+        
+        with col4:
             upset_pred = upset.get('upset_predictions', 0)
             st.metric("🔮 Upset Predictions Made", upset_pred)
         
-        with col4:
+        with col5:
             upset_prec = upset.get('upset_precision', 0)
             st.metric("✅ Upset Precision", f"{upset_prec:.1%}" if upset_prec else "N/A")
     
@@ -1317,6 +1320,26 @@ def _display_accuracy_results(result: Dict):
     - **Surface Breakdown**: Performance across different court types
     - **Upset Analysis**: How well the model identifies and predicts upsets
     """)
+
+    # Optional detailed results table (guarded for performance)
+    results_df = result.get('results_df')
+    if results_df is not None and len(results_df) > 0:
+        with st.expander("Show prediction details (may be slower)"):
+            display_cols = [
+                'match_date', 'tournament', 'surface', 'player1', 'player2',
+                'predicted_winner', 'actual_winner', 'correct', 'confidence',
+                'upset_predicted', 'was_upset', 'upset_correct', 'p1_win_prob', 'p2_win_prob'
+            ]
+            existing_cols = [c for c in display_cols if c in results_df.columns]
+            preview_df = results_df[existing_cols].copy()
+            preview_df['confidence'] = preview_df['confidence'].apply(lambda x: f"{x:.1%}")
+            preview_df['p1_win_prob'] = preview_df['p1_win_prob'].apply(lambda x: f"{x:.1%}")
+            preview_df['p2_win_prob'] = preview_df['p2_win_prob'].apply(lambda x: f"{x:.1%}")
+            max_rows = 200
+            if len(preview_df) > max_rows:
+                st.caption(f"Showing first {max_rows} of {len(preview_df)} matches")
+                preview_df = preview_df.head(max_rows)
+            st.dataframe(preview_df, use_container_width=True, hide_index=True)
 
 
 def page_custom_predictor(model, profiles):

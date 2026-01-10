@@ -203,6 +203,7 @@ def format_simulation_results(result: Dict) -> Dict:
         upset = result['upset_analysis']
         formatted['upset_analysis'] = {
             'total_upsets': upset.get('total_upsets', 0),
+            'upsets_correctly_predicted': upset.get('upsets_correctly_predicted', 0),
             'upset_accuracy': upset.get('upset_recall', 0),
             'upset_predictions': upset.get('upset_predictions_made', 0),
             'upset_precision': upset.get('upset_precision', 0)
