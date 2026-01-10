@@ -37,6 +37,10 @@ from accuracy_simulator import (
 )
 import re
 
+# Initialize session state for prediction history
+if 'prediction_history' not in st.session_state:
+    st.session_state.prediction_history = []
+
 
 def clean_time_display(time_str: str) -> str:
     """Clean time field for display (removes junk like '03:00Livestreams...')."""
@@ -1314,6 +1318,230 @@ def _display_accuracy_results(result: Dict):
     """)
 
 
+def page_custom_predictor(model, profiles):
+    """Custom match prediction page."""
+    st.header("🔮 Custom Match Predictor")
+    st.markdown("Predict the outcome of any hypothetical tennis match between two players.")
+
+    # Player selection
+    st.subheader("👤 Select Players")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("**Player 1**")
+        player1_options = sorted(profiles['player_name'].unique())
+        player1 = st.selectbox("Choose Player 1", player1_options, key="p1")
+
+    with col2:
+        st.markdown("**Player 2**")
+        player2_options = sorted(profiles['player_name'].unique())
+        player2 = st.selectbox("Choose Player 2", player2_options, key="p2")
+
+    # Match conditions
+    st.subheader("🎾 Match Conditions")
+
+    col3, col4, col5 = st.columns(3)
+
+    with col3:
+        surface = st.selectbox("Surface", ["Hard", "Clay", "Grass", "Carpet"], index=0)
+
+    with col4:
+        tournament_level = st.selectbox("Tournament Level", ["G", "M", "A", "B", "C"], 
+                                       format_func=lambda x: {"G": "Grand Slam", "M": "Masters 1000", "A": "ATP 500", "B": "ATP 250", "C": "Challenger"}[x],
+                                       index=2)
+
+    with col5:
+        # Try to determine favorite based on rankings if available
+        p1_profile = profiles[profiles['player_name'] == player1]
+        p2_profile = profiles[profiles['player_name'] == player2]
+
+        favorite_options = [f"{player1} (Favorite)", f"{player2} (Favorite)", "Unknown/No Odds"]
+        favorite_idx = 2  # Default to unknown
+
+        if not p1_profile.empty and not p2_profile.empty:
+            p1_rank = p1_profile['current_rank'].iloc[0] if 'current_rank' in p1_profile.columns else 999
+            p2_rank = p2_profile['current_rank'].iloc[0] if 'current_rank' in p2_profile.columns else 999
+
+            if pd.notna(p1_rank) and pd.notna(p2_rank):
+                if p1_rank < p2_rank:
+                    favorite_options[0] = f"{player1} (Rank {int(p1_rank)})"
+                    favorite_options[1] = f"{player2} (Rank {int(p2_rank)})"
+                    favorite_idx = 0
+                elif p2_rank < p1_rank:
+                    favorite_options[0] = f"{player1} (Rank {int(p1_rank)})"
+                    favorite_options[1] = f"{player2} (Rank {int(p2_rank)})"
+                    favorite_idx = 1
+
+        favorite = st.selectbox("Betting Favorite", favorite_options, index=favorite_idx)
+
+    # Prediction button
+    if st.button("🎯 Predict Match", type="primary", use_container_width=True):
+        if player1 == player2:
+            st.error("Please select two different players!")
+            return
+
+        with st.spinner("Analyzing match..."):
+            # Extract favorite name
+            if "Unknown" in favorite:
+                fav_name = None
+            else:
+                fav_name = favorite.split(" (")[0]
+
+            # Make prediction
+            prediction = model.predict_match(
+                player1, player2, 
+                surface=surface, 
+                favorite=fav_name,
+                tourney_level=tournament_level
+            )
+
+            if prediction is None:
+                st.error("Could not make prediction. One or both players may not be in our database.")
+                return
+
+        # Display results
+        st.success("Prediction Complete!")
+
+        # Main prediction
+        col_result1, col_result2 = st.columns(2)
+
+        with col_result1:
+            st.metric("Predicted Winner", prediction.predicted_winner)
+            st.metric("Confidence", f"{prediction.confidence:.1%}")
+
+        with col_result2:
+            st.metric("Player 1 Win Probability", f"{prediction.player1_win_prob:.1%}")
+            st.metric("Player 2 Win Probability", f"{prediction.player2_win_prob:.1%}")
+
+        # Upset analysis
+        if prediction.upset_probability > 0:
+            st.subheader("⚠️ Upset Analysis")
+
+            upset_level = "High" if prediction.upset_probability > 0.4 else "Medium" if prediction.upset_probability > 0.3 else "Low"
+
+            col_upset1, col_upset2, col_upset3 = st.columns(3)
+
+            with col_upset1:
+                st.metric("Upset Probability", f"{prediction.upset_probability:.1%}")
+
+            with col_upset2:
+                st.metric("Upset Risk Level", upset_level)
+
+            with col_upset3:
+                if fav_name:
+                    st.metric("Underdog", prediction.underdog if prediction.underdog != fav_name else prediction.favorite)
+                else:
+                    st.metric("Note", "No favorite set")
+
+            if prediction.upset_explanation:
+                st.info(f"💡 {prediction.upset_explanation}")
+
+        # Key factors
+        if prediction.key_factors:
+            st.subheader("🔑 Key Factors")
+            factors_text = "\n".join(f"• {factor}" for factor in prediction.key_factors[:5])  # Top 5
+            st.markdown(factors_text)
+
+        # Style matchup
+        st.subheader("🎭 Style Matchup")
+        st.info(f"**{prediction.style_matchup}**")
+
+        # Player comparison
+        st.subheader("📊 Player Comparison")
+
+        # Get player profiles for comparison
+        p1_data = profiles[profiles['player_name'] == player1].iloc[0] if not profiles[profiles['player_name'] == player1].empty else None
+        p2_data = profiles[profiles['player_name'] == player2].iloc[0] if not profiles[profiles['player_name'] == player2].empty else None
+
+        if p1_data is not None and p2_data is not None:
+            # Create comparison table
+            comparison_data = {
+                "Metric": ["Win %", "Ace %", "DF %", "Recent Form", "Style"],
+                player1: [
+                    f"{p1_data.get('overall_win_pct', 0):.1%}",
+                    f"{p1_data.get('ace_pct', 0):.1f}",
+                    f"{p1_data.get('df_pct', 0):.1f}",
+                    f"{p1_data.get('recent_form', 0):.2f}",
+                    p1_data.get('style_cluster', 'Unknown')
+                ],
+                player2: [
+                    f"{p2_data.get('overall_win_pct', 0):.1%}",
+                    f"{p2_data.get('ace_pct', 0):.1f}",
+                    f"{p2_data.get('df_pct', 0):.1f}",
+                    f"{p2_data.get('recent_form', 0):.2f}",
+                    p2_data.get('style_cluster', 'Unknown')
+                ]
+            }
+
+            comparison_df = pd.DataFrame(comparison_data)
+            st.dataframe(comparison_df, use_container_width=True, hide_index=True)
+
+        # Save to prediction history
+        prediction_record = {
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'player1': player1,
+            'player2': player2,
+            'surface': surface,
+            'tournament_level': tournament_level,
+            'favorite': fav_name,
+            'predicted_winner': prediction.predicted_winner,
+            'confidence': prediction.confidence,
+            'p1_win_prob': prediction.player1_win_prob,
+            'p2_win_prob': prediction.player2_win_prob,
+            'upset_probability': prediction.upset_probability,
+            'style_matchup': prediction.style_matchup
+        }
+        
+        st.session_state.prediction_history.append(prediction_record)
+        
+        # Show history summary
+        st.success(f"✅ Prediction saved! Total predictions made: {len(st.session_state.prediction_history)}")
+
+        # Disclaimer
+        st.caption("⚠️ **Disclaimer**: These predictions are for entertainment purposes only. Tennis matches can be unpredictable, and many factors (weather, injuries, form) can affect outcomes.")
+
+    # Prediction History
+    if st.session_state.prediction_history:
+        st.markdown("---")
+        st.subheader("📚 Prediction History")
+        
+        # Convert to dataframe for display
+        history_df = pd.DataFrame(st.session_state.prediction_history)
+        
+        # Show recent predictions (last 10)
+        recent_history = history_df.tail(10).copy()
+        recent_history['confidence'] = recent_history['confidence'].apply(lambda x: f"{x:.1%}")
+        recent_history['p1_win_prob'] = recent_history['p1_win_prob'].apply(lambda x: f"{x:.1%}")
+        recent_history['p2_win_prob'] = recent_history['p2_win_prob'].apply(lambda x: f"{x:.1%}")
+        recent_history['upset_probability'] = recent_history['upset_probability'].apply(lambda x: f"{x:.1%}")
+        
+        # Rename columns for display
+        display_cols = {
+            'timestamp': 'Time',
+            'player1': 'Player 1', 
+            'player2': 'Player 2',
+            'surface': 'Surface',
+            'predicted_winner': 'Predicted Winner',
+            'confidence': 'Confidence',
+            'upset_probability': 'Upset Risk'
+        }
+        
+        st.dataframe(
+            recent_history[list(display_cols.keys())].rename(columns=display_cols),
+            use_container_width=True,
+            hide_index=True
+        )
+        
+        if len(st.session_state.prediction_history) > 10:
+            st.caption(f"Showing last 10 of {len(st.session_state.prediction_history)} predictions")
+        
+        # Clear history button
+        if st.button("🗑️ Clear History"):
+            st.session_state.prediction_history = []
+            st.rerun()
+
+
 # =============================================================================
 # MAIN APP
 # =============================================================================
@@ -1321,6 +1549,25 @@ def _display_accuracy_results(result: Dict):
 def main():
     # Title
     st.title("🎾 Tennis Upset Predictor")
+    
+    # Quick overview
+    st.markdown("""
+    **AI-powered tennis match predictions with upset detection.** 
+    Analyze upcoming matches, explore player profiles, and predict custom matchups.
+    """)
+    
+    col_overview1, col_overview2, col_overview3, col_overview4 = st.columns(4)
+    
+    with col_overview1:
+        st.metric("**Data Source**", "TML Database")
+    with col_overview2:
+        st.metric("**Model Type**", "Random Forest")
+    with col_overview3:
+        st.metric("**Key Feature**", "Upset Detection")
+    with col_overview4:
+        st.metric("**Predictions**", "56% Accurate")
+    
+    st.markdown("---")
     
     # Load data with progress
     with st.spinner("Loading data and training model... (first load takes ~30 seconds)"):
@@ -1341,7 +1588,7 @@ def main():
     page = st.sidebar.radio(
         "Go to",
         ["📅 Match Calendar", "🎯 Upset Alerts", "👤 Player Profiles", 
-         "⚔️ Head-to-Head", "🏆 Leaderboards", "🗓️ Tournament Calendar", "📊 Historical Accuracy"],
+         "⚔️ Head-to-Head", "🏆 Leaderboards", "🗓️ Tournament Calendar", "🔮 Custom Predictor", "📊 Historical Accuracy"],
         index=0
     )
     
@@ -1362,6 +1609,16 @@ def main():
     st.sidebar.write(f"**CV Score:** {train_result['cv_mean']:.1%} ± {train_result['cv_std']:.1%}")
     st.sidebar.caption("Features: H2H, Fatigue, Form, Style")
     
+    # Feature importance chart
+    if 'feature_importance' in train_result and train_result['feature_importance'] is not None:
+        st.sidebar.markdown("**Top Features:**")
+        top_features = train_result['feature_importance'].head(5)
+        
+        for _, row in top_features.iterrows():
+            feature_name = row['feature'][:20] + "..." if len(row['feature']) > 20 else row['feature']
+            bar = "█" * int(row['importance'] * 20)  # Scale to 20 chars
+            st.sidebar.caption(f"{feature_name}: {bar}")
+    
     st.sidebar.markdown("---")
     st.sidebar.caption("Data: TML Database (TennisMyLife)")
     
@@ -1378,6 +1635,8 @@ def main():
         page_leaderboards(profiles)
     elif "Tournament Calendar" in page:
         page_calendar_tournaments()
+    elif "Custom Predictor" in page:
+        page_custom_predictor(model, profiles)
     elif "Historical Accuracy" in page:
         page_historical_accuracy()
 
