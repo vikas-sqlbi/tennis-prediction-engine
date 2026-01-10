@@ -1055,14 +1055,12 @@ class MatchupModel:
                     # Scale features for upset model
                     X_scaled = surface_scaler.transform(X)
                     # Get upset probability from surface-specific model
-                    upset_prob_raw = surface_model.predict_proba(X_scaled)[0][1]
-                    # Determine which player is underdog and assign probability
-                    if fav == player1_name:
-                        upset_prob = upset_prob_raw  # Model predicts underdog (p2) winning
-                    else:
-                        upset_prob = upset_prob_raw  # Model predicts underdog (p1) winning
+                    # Model was trained to predict: 1 = upset occurred, 0 = favorite won
+                    proba = surface_model.predict_proba(X_scaled)[0]
+                    upset_prob = proba[1]  # Probability of class 1 (upset)
+                    logger.debug(f"Using {surface_key} upset model: upset_prob={upset_prob:.1%}")
                 except Exception as e:
-                    logger.warning(f"Error using surface-specific upset model: {e}, falling back to win probability")
+                    logger.debug(f"Error using {surface_key} upset model: {e}, falling back to win probability")
                     # Fallback to original method
                     if fav == player1_name:
                         upset_prob = p2_win_prob
@@ -1070,6 +1068,7 @@ class MatchupModel:
                         upset_prob = p1_win_prob
             else:
                 # Fall back to win probability method
+                logger.debug(f"No {surface_key} upset model available, using win probability method")
                 if fav == player1_name:
                     upset_prob = p2_win_prob  # Underdog (p2) winning
                 else:
