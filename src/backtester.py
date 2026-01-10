@@ -59,7 +59,6 @@ def run_backtest(
         Tuple of (results DataFrame, analysis dict)
     """
     logger.info(f"Loading all historical data...")
-    # Load data from 2018 to current year
     current_year = datetime.now().year
     all_matches = load_matches(years=list(range(2018, current_year + 1)))
     all_matches = preprocess_matches(all_matches)

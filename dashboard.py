@@ -1295,11 +1295,11 @@ def _display_accuracy_results(result: Dict):
             st.metric("⚠️ Total Upsets Occurred", upset.get('total_upsets', 0))
         
         with col2:
-            st.metric("🎯 Upsets Correctly Predicted", upset.get('upsets_correctly_predicted', 0))
+            st.metric("✅ Upsets Correctly Predicted", upset.get('upsets_correctly_predicted', 0))
         
         with col3:
             upset_acc = upset.get('upset_accuracy', 0)
-            st.metric("📈 Upset Recall", f"{upset_acc:.1%}" if upset_acc else "N/A")
+            st.metric("🎯 Upset Recall", f"{upset_acc:.1%}" if upset_acc else "N/A")
         
         with col4:
             upset_pred = upset.get('upset_predictions', 0)
@@ -1307,7 +1307,77 @@ def _display_accuracy_results(result: Dict):
         
         with col5:
             upset_prec = upset.get('upset_precision', 0)
-            st.metric("✅ Upset Precision", f"{upset_prec:.1%}" if upset_prec else "N/A")
+            st.metric("📊 Upset Precision", f"{upset_prec:.1%}" if upset_prec else "N/A")
+        
+        # Deep dive error analysis
+        results_df = result.get('results_df')
+        if results_df is not None and len(results_df) > 0:
+            with st.expander("🔬 Deep Dive: Analyze Prediction Errors"):
+                st.markdown("**Error Pattern Analysis**")
+                st.caption("Analyzing why predictions failed to identify improvement opportunities")
+                
+                from upset_analyzer import analyze_error_patterns
+                
+                error_analysis = analyze_error_patterns(results_df, formatted['period'])
+                
+                if 'confusion_matrix' in error_analysis:
+                    cm = error_analysis['confusion_matrix']
+                    
+                    st.markdown("### Prediction Categories")
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        st.metric("✅ True Positives", cm['true_positives'], 
+                                 help="Correctly predicted upsets")
+                    with col2:
+                        st.metric("❌ False Positives", cm['false_positives'],
+                                 help="Predicted upset but favorite won")
+                    with col3:
+                        st.metric("❌ False Negatives", cm['false_negatives'],
+                                 help="Missed upsets")
+                    with col4:
+                        st.metric("✅ True Negatives", cm['true_negatives'],
+                                 help="Correctly predicted favorite wins")
+                    
+                    # Analyze False Positives
+                    if 'false_positive_patterns' in error_analysis and error_analysis['false_positive_patterns']:
+                        st.markdown("---")
+                        st.markdown("### ❌ False Positive Patterns")
+                        st.caption("Why did we predict upsets that didn't happen?")
+                        
+                        for pattern in error_analysis['false_positive_patterns']:
+                            st.write(f"**{pattern['name']}**")
+                            st.write(f"  • {pattern['description']}")
+                            st.write(f"  • Frequency: {pattern['frequency']:.1%} of false positives")
+                            st.write(f"  • Count: {pattern['count']} matches")
+                            st.write("")
+                    
+                    # Analyze False Negatives
+                    if 'false_negative_patterns' in error_analysis and error_analysis['false_negative_patterns']:
+                        st.markdown("---")
+                        st.markdown("### ❌ False Negative Patterns")
+                        st.caption("Why did we miss these upsets?")
+                        
+                        for pattern in error_analysis['false_negative_patterns']:
+                            st.write(f"**{pattern['name']}**")
+                            st.write(f"  • {pattern['description']}")
+                            st.write(f"  • Frequency: {pattern['frequency']:.1%} of missed upsets")
+                            st.write(f"  • Count: {pattern['count']} matches")
+                            st.write("")
+                    
+                    # Improvement suggestions section
+                    st.markdown("---")
+                    st.markdown("### 💡 Next Steps")
+                    st.info("""
+                    **To improve the model:**
+                    1. Review the patterns above
+                    2. Consider if they make sense in real tennis
+                    3. Report your findings in the chat with approved/rejected patterns
+                    4. I'll implement the approved improvements
+                    
+                    **For multi-period validation:**
+                    Run this analysis for 3 months, 6 months, and 12 months to identify consistent patterns.
+                    """)
     
     # Summary text
     st.markdown("---")
