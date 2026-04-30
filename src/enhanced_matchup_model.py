@@ -12,8 +12,14 @@ import logging
 from pathlib import Path
 
 # Import existing components
-from .matchup_model import MatchupModel, MatchPrediction, SetScorePrediction
-from .ultra_high_accuracy_predictor import ultra_predictor
+try:
+    # Try relative imports (for local development)
+    from .matchup_model import MatchupModel, MatchPrediction, SetScorePrediction
+    from .ultra_high_accuracy_predictor import ultra_predictor
+except ImportError:
+    # Fall back to absolute imports (for Streamlit Cloud)
+    from matchup_model import MatchupModel, MatchPrediction, SetScorePrediction
+    from ultra_high_accuracy_predictor import ultra_predictor
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
