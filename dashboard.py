@@ -1713,14 +1713,14 @@ def main():
     
     st.sidebar.markdown("---")
     st.sidebar.subheader("🤖 Model Performance")
-    st.sidebar.write(f"**Accuracy:** {train_result['accuracy']:.1%}")
-    st.sidebar.write(f"**CV Score:** {train_result['cv_mean']:.1%} ± {train_result['cv_std']:.1%}")
+    st.sidebar.write(f"**Accuracy:** {training_result['accuracy']:.1%}")
+    st.sidebar.write(f"**CV Score:** {training_result['cv_mean']:.1%} ± {training_result['cv_std']:.1%}")
     st.sidebar.caption("Features: H2H, Fatigue, Form, Style")
     
     # Feature importance chart
-    if 'feature_importance' in train_result and train_result['feature_importance'] is not None:
+    if 'feature_importance' in training_result and training_result['feature_importance'] is not None:
         st.sidebar.markdown("**Top Features:**")
-        top_features = train_result['feature_importance'].head(5)
+        top_features = training_result['feature_importance'].head(5)
         
         for _, row in top_features.iterrows():
             feature_name = row['feature'][:20] + "..." if len(row['feature']) > 20 else row['feature']
