@@ -73,6 +73,14 @@ def load_all_data():
 
 
 @st.cache_resource(show_spinner=False)
+def load_data():
+    """Load all data and build profiles - combined function for convenience."""
+    matches = load_all_data()
+    profiler, profiles = build_profiler_and_profiles(matches)
+    return matches, profiles, profiler
+
+
+@st.cache_resource(show_spinner=False)
 def build_profiler_and_profiles(_matches):
     """Build and cache player profiler and profiles."""
     profiler = PlayerProfiler(_matches)
